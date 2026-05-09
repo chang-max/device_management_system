@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>用户管理系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        .header {
+            background: #333;
+            color: white;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 20px; }
+        .header button {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+        .toolbar {
+            margin-bottom: 20px;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        .btn-primary { background: #3498db; color: white; }
+        .btn-success { background: #2ecc71; color: white; }
+        .btn-danger { background: #e74c3c; color: white; }
+        .btn-warning { background: #f39c12; color: white; }
+        .table-container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: bold;
+            color: #555;
+        }
+        tr:hover { background: #f8f9fa; }
+        .actions button {
+            padding: 5px 10px;
+            margin-right: 5px;
+            font-size: 12px;
+        }
+        .mac-unbound { color: #e74c3c; font-style: italic; }
+        .stats-panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 30px;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #3498db;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+        .status-valid { color: #2ecc71; font-weight: bold; }
+        .status-expired { color: #e74c3c; font-weight: bold; }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+        }
+        .modal h3 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .modal-buttons {
+            margin-top: 20px;
+            text-align: right;
+        }
+        .status-bar {
+            padding: 10px 20px;
+            border-top: 1px solid #eee;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>用户管理系统</h1>
+        <button onclick="logout()">退出登录</button>
+    </div>
+
+    <div class="container">
+        <!-- 统计面板 -->
+        <div class="stats-panel">
+            <div class="stat-item">
+                <div class="stat-value" id="statTotal">0</div>
+                <div class="stat-label">总用户数</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statValid">0</div>
+                <div class="stat-label">有效期内</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statExpired">0</div>
+                <div class="stat-label">已过期</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statBound">0</div>
+                <div class="stat-label">MAC已绑定</div>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <button class="btn btn-primary" onclick="showAddModal()">+ 新增用户</button>
+            <button class="btn btn-success" onclick="loadUsers()">刷新列表</button>
+        </div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>用户名</th>
+                        <th>密码</th>
+                        <th>有效期</th>
+                        <th>MAC绑定</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="userTable">
+                    <!-- 动态加载 -->
+                </tbody>
+            </table>
+            <div class="status-bar" id="statusBar">加载中...</div>
+        </div>
+    </div>
+
+    <!-- 新增/编辑用户模态框 -->
+    <div class="modal" id="userModal">
+        <div class="modal-content">
+            <h3 id="modalTitle">新增用户</h3>
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="username" placeholder="请输入用户名">
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="text" id="password" placeholder="请输入密码">
+            </div>
+            <div class="form-group">
+                <label>有效期</label>
+                <input type="date" id="expiryDate">
+            </div>
+            <div class="form-group">
+                <label>MAC绑定</label>
+                <input type="text" id="macBind" placeholder="FF:FF:FF:FF:FF:FF">
+            </div>
+            <div class="modal-buttons">
+                <button class="btn" onclick="closeModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveUser()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>

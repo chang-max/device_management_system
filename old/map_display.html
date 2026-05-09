@@ -1,0 +1,2333 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>高德地图</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* 防止闪烁和优化渲染性能 */
+        * {
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+        }
+        body, html {width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;}
+        #container {width: 100%; height: 100%; position: relative;}
+        /* 设备定位图标，使用SVG */
+        .device-marker-container {
+            position: relative;
+            width: 38px;
+            height: 68px;
+            cursor: pointer;
+            /* 移除过渡动画以减少卡顿 */
+            /* transition: transform 0.2s; */
+            /* 优化渲染性能 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .device-marker-container:hover {
+            transform: scale(1.15) translateZ(0);
+        }
+        .device-marker-svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+        }
+        /* 六边形聚合标记样式 */
+        .hexagon-cluster-container {
+            position: relative;
+            width: 50px;
+            height: 58px;
+            cursor: pointer;
+            /* 移除过渡动画以减少卡顿 */
+            /* transition: transform 0.2s; */
+            z-index: 1;
+            /* 优化渲染性能 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .hexagon-cluster-container:hover {
+            transform: scale(1.1) translateZ(0);
+        }
+        .hexagon-cluster-container.expanded {
+            z-index: 1000;
+        }
+        .hexagon-cluster-container.expanded .hexagon-yellow {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .hexagon-svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+        }
+        .hexagon-cluster-badge {
+            position: absolute;
+            top: -3px;
+            right: -3px;
+            background: #ff6b6b;
+            color: white;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            z-index: 10;
+        }
+        /* 蜂窝展开容器 */
+        .honeycomb-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 0;
+            height: 0;
+            pointer-events: none;
+        }
+        .honeycomb-container.show {
+            pointer-events: auto;
+        }
+        /* 展开时确保在最上层 */
+        .hexagon-cluster-container.expanded .honeycomb-container {
+            z-index: 10000;
+        }
+        /* 中心灰色六边形 */
+        .hexagon-center {
+            position: absolute;
+            width: 48px;
+            height: 42px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) translateZ(0);
+            cursor: pointer;
+            z-index: 1001;
+            /* 移除过渡动画以减少卡顿 */
+            /* transition: transform 0.2s; */
+            /* 优化渲染性能 */
+            will-change: transform;
+        }
+        .hexagon-center:hover {
+            transform: translate(-50%, -50%) scale(1.1) translateZ(0);
+        }
+        /* 设备蓝色六边形 */
+        .hexagon-device {
+            position: absolute;
+            width: 48px;
+            height: 42px;
+            cursor: pointer;
+            /* 移除过渡动画以减少卡顿 */
+            /* transition: transform 0.2s; */
+            z-index: 1000;
+            /* 优化渲染性能 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .hexagon-device:hover {
+            transform: scale(1.15) translateZ(0);
+            z-index: 1002;
+        }
+        .hexagon-device-info {
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 10px;
+            color: #333;
+            white-space: nowrap;
+            background: rgba(255,255,255,0.9);
+            padding: 2px 6px;
+            border-radius: 3px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .hexagon-device:hover .hexagon-device-info {
+            opacity: 1;
+        }
+        /* 设备悬停tooltip */
+        .device-tooltip {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            padding: 10px;
+            min-width: 200px;
+            max-width: 300px;
+            pointer-events: none;
+            z-index: 100000;
+            /* 优化渲染性能，防止闪烁 */
+            will-change: transform, opacity;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .device-tooltip .device-info-window {
+            padding: 0;
+        }
+        /* 黄色六边形（聚合状态） */
+        .hexagon-yellow {
+            position: relative;
+            width: 50px;
+            height: 52px;
+            cursor: pointer;
+            /* 移除过渡动画以减少卡顿 */
+            /* transition: transform 0.2s; */
+            /* 优化渲染性能 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .hexagon-yellow:hover {
+            transform: scale(1.1) translateZ(0);
+        }
+        .device-info-window {
+            padding: 10px;
+            min-width: 200px;
+        }
+        .device-info-window h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+            font-size: 14px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .device-info-window p {
+            margin: 5px 0;
+            font-size: 12px;
+            color: #666;
+        }
+        .filter-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255,255,255,0.95);
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-height: 500px;
+            overflow-y: auto;
+            min-width: 250px;
+            /* 优化渲染性能，防止闪烁 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .filter-panel h3 {margin: 0 0 10px 0; color: #333; font-size: 16px;}
+        .tree-node {
+            margin: 5px 0;
+        }
+        .tree-node-content {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .tree-node-content:hover {background: #f0f0f0;}
+        .tree-toggle {
+            width: 16px;
+            height: 16px;
+            margin-right: 5px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: #666;
+        }
+        .tree-toggle.no-children {
+            visibility: hidden;
+        }
+        .tree-checkbox {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+        .tree-label {
+            flex: 1;
+            font-size: 14px;
+            color: #333;
+        }
+        .tree-children {
+            margin-left: 20px;
+            display: none;
+        }
+        .tree-children.expanded {
+            display: block;
+        }
+        .area-badge {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 5px;
+        }
+        .area-badge.has-area {
+            background: #67c23a;
+            color: white;
+        }
+        .area-badge.no-area {
+            background: #909399;
+            color: white;
+        }
+        .filter-actions {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+        .filter-btn {
+            padding: 5px 12px;
+            border: 1px solid #dcdfe6;
+            background: #fff;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .filter-btn:hover {
+            background: #f5f7fa;
+        }
+        /* 区域控制按钮样式 - 缩小版 */
+        .control-actions {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #e0e0e0;
+        }
+        .control-actions h4 {
+            margin: 0 0 6px 0;
+            color: #333;
+            font-size: 12px;
+        }
+        .control-row {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+        .control-btn {
+            flex: 1;
+            padding: 4px 8px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .control-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        .control-btn:active {
+            transform: translateY(0);
+        }
+        .btn-on {
+            background: #67c23a;
+            color: white;
+        }
+        .btn-off {
+            background: #f56c6c;
+            color: white;
+        }
+        .btn-dim {
+            background: #e6a23c;
+            color: white;
+        }
+        .dimming-container {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+        }
+        .dimming-slider {
+            flex: 1;
+            height: 4px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: #ddd;
+            border-radius: 2px;
+            outline: none;
+        }
+        .dimming-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #e6a23c;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .dimming-value {
+            min-width: 32px;
+            text-align: center;
+            font-size: 11px;
+            color: #666;
+        }
+        .selected-area-info {
+            margin-bottom: 6px;
+            padding: 4px 6px;
+            background: #f0f9ff;
+            border: 1px solid #b3d8ff;
+            border-radius: 3px;
+            font-size: 11px;
+            color: #409eff;
+        }
+        /* 控制面板头部样式 */
+        .control-header {
+            padding: 4px 0;
+        }
+        .control-header h4 {
+            margin: 0;
+        }
+
+        /* 设备详情弹窗样式 */
+        .device-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 200000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+        .device-modal-overlay.show {
+            display: flex;
+        }
+        .device-modal {
+            background: white;
+            border-radius: 8px;
+            width: 400px;
+            max-height: 80vh;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        .device-modal-header {
+            background: #409eff;
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .device-modal-header h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+        .device-modal-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .device-modal-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+        }
+        .device-modal-body {
+            padding: 16px;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        .device-info-section {
+            margin-bottom: 16px;
+        }
+        .device-info-section h4 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            color: #666;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 4px;
+        }
+        .device-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 12px;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        .device-info-row:last-child {
+            border-bottom: none;
+        }
+        .device-info-label {
+            color: #666;
+        }
+        .device-info-value {
+            color: #333;
+            font-weight: bold;
+        }
+        .device-info-value.online {
+            color: #67c23a;
+        }
+        .device-info-value.offline {
+            color: #f56c6c;
+        }
+        .device-modal-footer {
+            padding: 12px 16px;
+            background: #f5f7fa;
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+        }
+        .device-control-btn {
+            padding: 6px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .device-control-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        .device-btn-on {
+            background: #67c23a;
+            color: white;
+        }
+        .device-btn-off {
+            background: #f56c6c;
+            color: white;
+        }
+        .device-btn-dim {
+            background: #e6a23c;
+            color: white;
+        }
+        .device-btn-read {
+            background: #409eff;
+            color: white;
+        }
+        .device-dimming-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .device-dimming-slider {
+            flex: 1;
+            height: 4px;
+        }
+        .device-dimming-value {
+            min-width: 36px;
+            text-align: center;
+            font-size: 11px;
+            color: #666;
+        }
+        /* 两列网格布局 */
+        .two-column-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 12px;
+        }
+        .two-column-grid .device-info-row {
+            border-bottom: none;
+            padding: 4px 0;
+        }
+        .two-column-grid .device-info-label {
+            font-size: 11px;
+        }
+        .two-column-grid .device-info-value {
+            font-size: 11px;
+        }
+        /* 位置行样式 */
+        .location-row .device-info-value {
+            font-size: 11px;
+            font-family: monospace;
+        }
+        #status {
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+    </style>
+    <script>
+        // 隐藏 Canvas2D willReadFrequently 警告
+        const originalGetContext = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+            if (type === '2d') {
+                attributes = attributes || {};
+                attributes.willReadFrequently = true;
+            }
+            return originalGetContext.call(this, type, attributes);
+        };
+    </script>
+    <script>
+        // 禁用高德地图的动画效果以提升性能
+        window.AMapConfig = {
+            // 禁用硬件加速检测，强制使用软件渲染（在PyQt中更稳定）
+            forceSoftwareRendering: false,
+            // 减少帧率
+            frameRate: 30
+        };
+    </script>
+    <script>
+        window._AMapSecurityConfig = {
+            securityJsCode: '{{MAP_SECURITY_KEY}}'
+        };
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key={{MAP_KEY}}"></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script type="text/javascript">
+        var map = null;
+        var polygons = {};
+        var markers = {};
+        var mapHandler = null;
+        var areaData = [];
+        var deviceData = [];
+        var mapReady = false;
+        var pendingAreaData = null;
+        var pendingDeviceData = null;
+        var selectedAreaKeys = new Set(); // 存储选中的区域key
+        var clusterGroups = {}; // 存储聚合组，key为"lng,lat"
+        var expandedCluster = null; // 当前展开的聚合标记
+        var clusterExpandTimeout = null; // 聚合展开延迟计时器
+
+        function buildNodeKey(pathParts) {
+            return pathParts
+                .map(function(part) {
+                    return String(part || '').replace(/[^\w\u4e00-\u9fa5-]/g, '_');
+                })
+                .join('__');
+        }
+
+        function decorateAreaNodes(nodes, parentPath) {
+            parentPath = parentPath || [];
+            return (nodes || []).map(function(node) {
+                var currentPath = parentPath.concat([node.name || '']);
+                var clonedNode = Object.assign({}, node);
+                clonedNode._path = currentPath;
+                clonedNode._key = buildNodeKey(currentPath);
+                clonedNode.children = decorateAreaNodes(node.children || [], currentPath);
+                return clonedNode;
+            });
+        }
+
+        // 防抖函数
+        function debounce(func, wait) {
+            var timeout;
+            return function() {
+                var context = this, args = arguments;
+                clearTimeout(timeout);
+                timeout = setTimeout(function() {
+                    func.apply(context, args);
+                }, wait);
+            };
+        }
+
+        // 节流函数
+        function throttle(func, limit) {
+            var inThrottle;
+            return function() {
+                var context = this, args = arguments;
+                if (!inThrottle) {
+                    func.apply(context, args);
+                    inThrottle = true;
+                    setTimeout(function() {
+                        inThrottle = false;
+                    }, limit);
+                }
+            };
+        }
+
+        // 地图配置（默认配置，会被Python传递的配置覆盖）
+        var mapConfig = {
+            zoom: 12,
+            center: [121.4737, 31.2304],  // 上海
+            key: ''
+        };
+
+        // 设置地图配置（由Python调用）
+        function setMapConfig(config) {
+            mapConfig = config;
+            // 如果地图已初始化，更新地图配置
+            if (map) {
+                map.setZoomAndCenter(mapConfig.zoom, mapConfig.center);
+            }
+        }
+
+        function initMap() {
+            try {
+                map = new AMap.Map('container', {
+                    zoom: mapConfig.zoom,
+                    center: mapConfig.center,
+                    viewMode: '2D',
+                    // 性能优化配置
+                    renderOptions: {
+                        // 启用Canvas渲染优化
+                        preserveDrawingBuffer: false
+                    },
+                    // 禁用默认的动画效果
+                    animateEnable: false,
+                    // 禁用键盘控制
+                    keyboardEnable: false,
+                    // 禁用双击缩放动画
+                    doubleClickZoom: false,
+                    // 禁用滚轮缩放平滑动画
+                    scrollWheel: true,
+                    // 禁用触摸缩放动画
+                    touchZoom: false,
+                    // 禁用惯性拖拽
+                    dragEnable: true,
+                    // 缩放级别范围
+                    zooms: [3, 20],
+                    // 使用更轻量的地图样式
+                    mapStyle: 'amap://styles/normal',
+                    // 禁用旋转和倾斜（提升性能）
+                    rotateEnable: false,
+                    pitchEnable: false,
+                    // 禁用默认图层动画
+                    defaultCursor: 'default',
+                    // 性能优化：减少地图细节
+                    features: ['bg', 'road', 'building', 'point'],
+                    // 禁用3D建筑
+                    showBuildingBlock: false
+                });
+
+                // 视野变化时动态渲染（防抖300ms）
+                var debouncedUpdateVisibleMarkers = debounce(function() {
+                    updateVisibleMarkers();
+                }, 300);
+
+                map.on('moveend', debouncedUpdateVisibleMarkers);
+                map.on('zoomend', debouncedUpdateVisibleMarkers);
+
+                // 移动/缩放过程中简化渲染（节流100ms）
+                var throttledOptimize = throttle(function() {
+                    optimizeMarkersForPerformance(true);
+                }, 100);
+
+                map.on('movestart', function() {
+                    optimizeMarkersForPerformance(true);
+                });
+
+                map.on('moving', throttledOptimize);
+
+                map.on('moveend', function() {
+                    setTimeout(function() {
+                        optimizeMarkersForPerformance(false);
+                    }, 150);
+                });
+
+                map.on('zoomstart', function() {
+                    optimizeMarkersForPerformance(true);
+                });
+
+                map.on('zoomend', function() {
+                    setTimeout(function() {
+                        optimizeMarkersForPerformance(false);
+                    }, 150);
+                });
+
+                map.on('complete', function() {
+                    mapReady = true;
+                    console.log('地图加载完成');
+                    document.getElementById('status').textContent = '地图加载成功';
+                    if (pendingAreaData) {
+                        var dataToRender = pendingAreaData;
+                        pendingAreaData = null;
+                        loadAreaData(dataToRender);
+                    }
+                    if (pendingDeviceData) {
+                        var deviceDataToRender = pendingDeviceData;
+                        pendingDeviceData = null;
+                        loadDeviceData(deviceDataToRender);
+                    }
+                });
+
+                map.on('error', function(e) {
+                    console.error('地图错误:', e);
+                    document.getElementById('status').textContent = '地图加载失败: ' + e.info;
+                });
+            } catch (e) {
+                console.error('初始化地图失败:', e);
+                document.getElementById('status').textContent = '初始化失败: ' + e.message;
+            }
+        }
+
+        // 性能优化：移动/缩放时简化标记显示
+        var markerOptimizationEnabled = false;
+        function optimizeMarkersForPerformance(enable) {
+            if (markerOptimizationEnabled === enable) return;
+            markerOptimizationEnabled = enable;
+
+            // 获取所有标记容器
+            var deviceMarkers = document.querySelectorAll('.device-marker-container');
+            var clusterMarkers = document.querySelectorAll('.hexagon-cluster-container');
+
+            if (enable) {
+                // 移动/缩放时：简化显示
+                deviceMarkers.forEach(function(marker) {
+                    marker.style.opacity = '0.5';
+                    marker.style.transform = 'scale(0.8)';
+                });
+                clusterMarkers.forEach(function(marker) {
+                    if (marker.dataset.expanded !== 'true') {
+                        marker.style.opacity = '0.5';
+                        marker.style.transform = 'scale(0.8)';
+                    }
+                });
+            } else {
+                // 停止移动/缩放时：恢复正常显示
+                deviceMarkers.forEach(function(marker) {
+                    marker.style.opacity = '1';
+                    marker.style.transform = '';
+                });
+                clusterMarkers.forEach(function(marker) {
+                    if (marker.dataset.expanded !== 'true') {
+                        marker.style.opacity = '1';
+                        marker.style.transform = '';
+                    }
+                });
+            }
+        }
+
+        // 视野范围内动态渲染 - 只显示可见区域的设备
+        var visibleDeviceKeys = new Set();
+        function updateVisibleMarkers() {
+            if (!map || !mapReady) return;
+
+            var bounds = map.getBounds();
+            if (!bounds) return;
+
+            // 遍历所有设备标记，只显示视野范围内的
+            for (var key in markers) {
+                var marker = markers[key];
+                if (!marker) continue;
+
+                var extData = marker.getExtData();
+                if (!extData) continue;
+
+                // 检查是否是设备标记（有deviceId或devices）
+                var isDeviceMarker = extData.deviceId || extData.isCluster;
+                if (!isDeviceMarker) continue;
+
+                var position = marker.getPosition();
+                if (!position) continue;
+
+                // 检查是否在视野范围内
+                var isVisible = bounds.contains(position);
+                var markerContent = marker.getContent();
+
+                if (markerContent) {
+                    if (isVisible) {
+                        markerContent.style.display = '';
+                        visibleDeviceKeys.add(key);
+                    } else {
+                        markerContent.style.display = 'none';
+                        visibleDeviceKeys.delete(key);
+                    }
+                }
+            }
+
+            console.log('视野内设备数量:', visibleDeviceKeys.size);
+        }
+
+        // 加载区域数据
+        function loadAreaData(data) {
+            areaData = decorateAreaNodes(data || []);
+
+            if (!mapReady || !map) {
+                pendingAreaData = data || [];
+                document.getElementById('status').textContent = '地图初始化中，区域数据等待加载...';
+                return false;
+            }
+
+            // 先清除地图上所有现有多边形
+            clearAllPolygons();
+
+            console.log('加载区域数据:', areaData);
+            renderTree();
+            // 默认显示所有有坐标的区域
+            showAllAreas();
+            return true;
+        }
+
+        // 加载设备数据
+        // 首次加载设备数据标志
+        var isFirstDeviceLoad = true;
+
+        function loadDeviceData(devices) {
+            deviceData = devices || [];
+
+            if (!mapReady || !map) {
+                pendingDeviceData = devices || [];
+                console.log('地图尚未就绪，设备数据等待加载...');
+                return false;
+            }
+
+            // 清除现有设备标记
+            clearAllMarkers();
+
+            console.log('加载设备数据:', deviceData);
+            // 显示设备标记
+            showAllDevices();
+
+            // 首次加载时，自动调整视野以显示所有设备
+            if (isFirstDeviceLoad && deviceData.length > 0) {
+                isFirstDeviceLoad = false;
+                setTimeout(function() {
+                    fitMapToAllDevices();
+                }, 200);
+            }
+
+            return true;
+        }
+
+        // 调整地图视野以显示所有设备
+        function fitMapToAllDevices() {
+            if (!map || !mapReady || deviceData.length === 0) return;
+
+            // 收集所有设备的经纬度
+            var bounds = [];
+            deviceData.forEach(function(device) {
+                if (device.lng && device.lat) {
+                    var lng = parseFloat(device.lng);
+                    var lat = parseFloat(device.lat);
+                    if (!isNaN(lng) && !isNaN(lat)) {
+                        bounds.push([lng, lat]);
+                    }
+                }
+            });
+
+            if (bounds.length === 0) {
+                console.log('没有有效的设备位置数据');
+                return;
+            }
+
+            // 使用高德地图的setFitView方法自动调整视野
+            if (bounds.length === 1) {
+                // 只有一个设备时，居中并放大
+                map.setCenter(bounds[0]);
+                map.setZoom(15);
+                console.log('单个设备，居中放大显示');
+            } else {
+                // 多个设备时，显示所有设备
+                map.setFitView(null, false, [50, 50, 50, 50], 15);
+                console.log('多个设备，调整视野显示所有设备');
+            }
+        }
+
+        // 清除所有设备标记
+        function clearAllMarkers() {
+            for (var deviceId in markers) {
+                if (markers[deviceId]) {
+                    markers[deviceId].setMap(null);
+                }
+            }
+            markers = {};
+        }
+
+        // 显示所有设备（支持聚合和视野渲染）
+        function showAllDevices() {
+            // 先按经纬度分组
+            clusterGroups = {};
+            deviceData.forEach(function(device) {
+                if (!device.lng || !device.lat) return;
+                var clusterKey = device.lng + ',' + device.lat;
+                if (!clusterGroups[clusterKey]) {
+                    clusterGroups[clusterKey] = [];
+                }
+                clusterGroups[clusterKey].push(device);
+            });
+
+            // 显示设备标记（聚合或单个）
+            for (var clusterKey in clusterGroups) {
+                var devices = clusterGroups[clusterKey];
+                if (devices.length > 1) {
+                    // 多个设备，显示聚合标记
+                    showClusterMarker(clusterKey, devices);
+                } else {
+                    // 单个设备，显示普通标记
+                    showDeviceMarker(devices[0]);
+                }
+            }
+
+            // 应用视野过滤
+            setTimeout(function() {
+                updateVisibleMarkers();
+            }, 100);
+        }
+
+        // 显示单个设备标记
+        function showDeviceMarker(device) {
+            if (!mapReady || !map || !device.lng || !device.lat) {
+                return;
+            }
+
+            var lng = parseFloat(device.lng);
+            var lat = parseFloat(device.lat);
+
+            if (isNaN(lng) || isNaN(lat)) {
+                console.warn('设备经纬度无效:', device.deviceId, device.lng, device.lat);
+                return;
+            }
+
+            var markerKey = device.deviceId;
+
+            // 如果已存在，先移除
+            if (markers[markerKey]) {
+                markers[markerKey].setMap(null);
+            }
+
+            try {
+                // 创建自定义标记内容（SVG图标）
+                var markerContent = document.createElement('div');
+                markerContent.className = 'device-marker-container';
+                markerContent.innerHTML = '<svg class="device-marker-svg" viewBox="0 0 76.05 135.34" xmlns="http://www.w3.org/2000/svg"><g stroke-linecap="round" transform="translate(10 10)"><path d="M56.05 24.5 C56.05 25.92, 55.9 27.36, 55.62 28.75 C55.34 30.15, 54.91 31.55, 54.36 32.88 C53.8 34.21, 53.1 35.52, 52.29 36.75 C51.48 37.98, 50.53 39.16, 49.49 40.25 C48.45 41.33, 47.28 42.36, 46.04 43.27 C44.79 44.18, 43.44 45.01, 42.03 45.72 C40.63 46.43, 39.13 47.04, 37.61 47.52 C36.08 48.01, 34.49 48.38, 32.89 48.63 C31.29 48.87, 29.64 49, 28.02 49 C26.4 49, 24.75 48.87, 23.16 48.63 C21.56 48.38, 19.96 48.01, 18.44 47.52 C16.91 47.04, 15.42 46.43, 14.01 45.72 C12.61 45.01, 11.25 44.18, 10.01 43.27 C8.77 42.36, 7.6 41.33, 6.56 40.25 C5.51 39.16, 4.57 37.98, 3.75 36.75 C2.94 35.52, 2.24 34.21, 1.69 32.88 C1.14 31.55, 0.71 30.15, 0.43 28.75 C0.14 27.36, 0 25.92, 0 24.5 C0 23.08, 0.14 21.64, 0.43 20.25 C0.71 18.85, 1.14 17.45, 1.69 16.12 C2.24 14.79, 2.94 13.48, 3.75 12.25 C4.57 11.02, 5.51 9.84, 6.56 8.75 C7.6 7.67, 8.77 6.64, 10.01 5.73 C11.25 4.82, 12.61 3.99, 14.01 3.28 C15.42 2.57, 16.91 1.96, 18.44 1.48 C19.96 0.99, 21.56 0.62, 23.16 0.37 C24.75 0.13, 26.4 0, 28.02 0 C29.64 0, 31.29 0.13, 32.89 0.37 C34.49 0.62, 36.08 0.99, 37.61 1.48 C39.13 1.96, 40.63 2.57, 42.03 3.28 C43.44 3.99, 44.79 4.82, 46.04 5.73 C47.28 6.64, 48.45 7.67, 49.49 8.75 C50.53 9.84, 51.48 11.02, 52.29 12.25 C53.1 13.48, 53.8 14.79, 54.36 16.12 C54.91 17.45, 55.34 18.85, 55.62 20.25 C55.9 21.64, 55.97 23.79, 56.05 24.5" fill="#a5d8ff"/><path d="M56.05 24.5 C56.05 25.92, 55.9 27.36, 55.62 28.75 C55.34 30.15, 54.91 31.55, 54.36 32.88 C53.8 34.21, 53.1 35.52, 52.29 36.75 C51.48 37.98, 50.53 39.16, 49.49 40.25 C48.45 41.33, 47.28 42.36, 46.04 43.27 C44.79 44.18, 43.44 45.01, 42.03 45.72 C40.63 46.43, 39.13 47.04, 37.61 47.52 C36.08 48.01, 34.49 48.38, 32.89 48.63 C31.29 48.87, 29.64 49, 28.02 49 C26.4 49, 24.75 48.87, 23.16 48.63 C21.56 48.38, 19.96 48.01, 18.44 47.52 C16.91 47.04, 15.42 46.43, 14.01 45.72 C12.61 45.01, 11.25 44.18, 10.01 43.27 C8.77 42.36, 7.6 41.33, 6.56 40.25 C5.51 39.16, 4.57 37.98, 3.75 36.75 C2.94 35.52, 2.24 34.21, 1.69 32.88 C1.14 31.55, 0.71 30.15, 0.43 28.75 C0.14 27.36, 0 25.92, 0 24.5 C0 23.08, 0.14 21.64, 0.43 20.25 C0.71 18.85, 1.14 17.45, 1.69 16.12 C2.24 14.79, 2.94 13.48, 3.75 12.25 C4.57 11.02, 5.51 9.84, 6.56 8.75 C7.6 7.67, 8.77 6.64, 10.01 5.73 C11.25 4.82, 12.61 3.99, 14.01 3.28 C15.42 2.57, 16.91 1.96, 18.44 1.48 C19.96 0.99, 21.56 0.62, 23.16 0.37 C24.75 0.13, 26.4 0, 28.02 0 C29.64 0, 31.29 0.13, 32.89 0.37 C34.49 0.62, 36.08 0.99, 37.61 1.48 C39.13 1.96, 40.63 2.57, 42.03 3.28 C43.44 3.99, 44.79 4.82, 46.04 5.73 C47.28 6.64, 48.45 7.67, 49.49 8.75 C50.53 9.84, 51.48 11.02, 52.29 12.25 C53.1 13.48, 53.8 14.79, 54.36 16.12 C54.91 17.45, 55.34 18.85, 55.62 20.25 C55.9 21.64, 55.97 23.79, 56.05 24.5" stroke="#1e1e1e" stroke-width="2" fill="none"/></g><g><g transform="translate(17.2132 51.4148)"><path d="M0 0 C3.68 12.32, 15.02 73.93, 22.11 73.93 C29.19 73.93, 46.2 12.32, 42.52 0 C38.83 -12.32, 7.09 0, 0 0" fill="#a5d8ff"/><path d="M0 0 C3.68 12.32, 15.02 73.93, 22.11 73.93 C29.19 73.93, 46.2 12.32, 42.52 0 C38.83 -12.32, 7.09 0, 0 0" stroke="#1e1e1e" stroke-width="2" fill="none"/></g></g></svg>';
+
+                var marker = new AMap.Marker({
+                    position: [lng, lat],
+                    content: markerContent,
+                    offset: new AMap.Pixel(-19, -60),
+                    extData: device
+                });
+
+                // 点击事件 - 打开设备详情弹窗
+                marker.on('click', function(e) {
+                    var deviceInfo = this.getExtData();
+                    console.log('DEVICE_CLICK:' + JSON.stringify(deviceInfo));
+
+                    // 打开设备详情弹窗
+                    openDeviceModal({
+                        deviceId: deviceInfo.deviceId,
+                        deviceName: deviceInfo.deviceName,
+                        area: deviceInfo.area,
+                        isOnline: deviceInfo.isOnline,
+                        lng: deviceInfo.lng,
+                        lat: deviceInfo.lat
+                    });
+
+                    // 同时通知Python（用于记录或其他处理）
+                    if (mapHandler) {
+                        mapHandler.onDeviceClicked(JSON.stringify(deviceInfo));
+                    }
+                });
+
+                // 鼠标悬停显示信息提示（与聚合展开部分保持一致）
+                var deviceTooltip = null;
+                markerContent.addEventListener('mouseenter', function(e) {
+                    e.stopPropagation();
+                    if (deviceTooltip) {
+                        deviceTooltip.remove();
+                    }
+                    deviceTooltip = document.createElement('div');
+                    deviceTooltip.className = 'device-tooltip';
+                    deviceTooltip.innerHTML = createDeviceInfoWindow(device);
+                    deviceTooltip.style.cssText = 'position:fixed;z-index:100000;pointer-events:none;display:none;';
+                    document.body.appendChild(deviceTooltip);
+                });
+
+                markerContent.addEventListener('mousemove', function(e) {
+                    e.stopPropagation();
+                    if (deviceTooltip) {
+                        deviceTooltip.style.display = 'block';
+                        deviceTooltip.style.left = (e.clientX + 10) + 'px';
+                        deviceTooltip.style.top = (e.clientY - 10) + 'px';
+                    }
+                });
+
+                markerContent.addEventListener('mouseleave', function(e) {
+                    e.stopPropagation();
+                    if (deviceTooltip) {
+                        deviceTooltip.remove();
+                        deviceTooltip = null;
+                    }
+                });
+
+                marker.setMap(map);
+                markers[markerKey] = marker;
+
+            } catch (e) {
+                console.error('添加设备标记失败:', e);
+            }
+        }
+
+        // 创建设备信息窗体内容
+        function createDeviceInfoWindow(device) {
+            return '<div class="device-info-window">' +
+                   '<h4>' + (device.deviceName || '未命名设备') + '</h4>' +
+                   '<p><strong>设备号:</strong> ' + (device.deviceId || '-') + '</p>' +
+                   '<p><strong>经度:</strong> ' + (device.lng || '-') + '</p>' +
+                   '<p><strong>纬度:</strong> ' + (device.lat || '-') + '</p>' +
+                   '<p><strong>区域:</strong> ' + (device.area || '-') + '</p>' +
+                   '</div>';
+        }
+
+        // 六边形SVG路径 - 纵向正六边形 (pointy topped)
+        // viewBox 48x42，中心在 (24, 21)
+        var hexagonPath = 'M24 0 L43.05 10.5 V31.5 L24 42 L4.95 31.5 V10.5 Z';
+        var hexagonViewBox = '0 0 48 42';
+
+        // 显示六边形聚合标记
+        function showClusterMarker(clusterKey, devices) {
+            if (!mapReady || !map || devices.length === 0) return;
+
+            var firstDevice = devices[0];
+            var lng = parseFloat(firstDevice.lng);
+            var lat = parseFloat(firstDevice.lat);
+
+            if (isNaN(lng) || isNaN(lat)) return;
+
+            // 如果已存在，先移除
+            if (markers[clusterKey]) {
+                markers[clusterKey].setMap(null);
+            }
+
+            try {
+                // 创建聚合标记容器
+                var markerContent = document.createElement('div');
+                markerContent.className = 'hexagon-cluster-container';
+                markerContent.dataset.clusterKey = clusterKey;
+                markerContent.dataset.expanded = 'false';
+
+                // 创建黄色六边形（聚合状态）
+                var yellowHexagon = document.createElement('div');
+                yellowHexagon.className = 'hexagon-yellow';
+                yellowHexagon.innerHTML =
+                    '<svg class="hexagon-svg" viewBox="' + hexagonViewBox + '" xmlns="http://www.w3.org/2000/svg">' +
+                    '<path d="' + hexagonPath + '" fill="#ffd93d" stroke="#1e1e1e" stroke-width="2"/>' +
+                    '</svg>' +
+                    '<div class="hexagon-cluster-badge">' + devices.length + '</div>';
+                markerContent.appendChild(yellowHexagon);
+
+                // 创建蜂窝展开容器
+                var honeycombContainer = document.createElement('div');
+                honeycombContainer.className = 'honeycomb-container';
+                markerContent.appendChild(honeycombContainer);
+
+                // 点击黄色六边形展开
+                yellowHexagon.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var isExpanded = markerContent.dataset.expanded === 'true';
+                    if (!isExpanded) {
+                        // 展开蜂窝布局
+                        expandHoneycomb(markerContent, honeycombContainer, devices, lng, lat);
+                        markerContent.classList.add('expanded');
+                        markerContent.dataset.expanded = 'true';
+                        // 置顶显示
+                        bringToFront(markerContent);
+                    }
+                });
+
+                var marker = new AMap.Marker({
+                    position: [lng, lat],
+                    content: markerContent,
+                    offset: new AMap.Pixel(-25, -29),
+                    extData: { clusterKey: clusterKey, devices: devices, isCluster: true }
+                });
+
+                marker.setMap(map);
+                markers[clusterKey] = marker;
+
+            } catch (e) {
+                console.error('添加聚合标记失败:', e);
+            }
+        }
+
+        // 展开蜂窝布局
+        function expandHoneycomb(container, honeycombContainer, devices, centerLng, centerLat) {
+            honeycombContainer.innerHTML = '';
+
+            // 创建中心灰色六边形
+            var centerHexagon = document.createElement('div');
+            centerHexagon.className = 'hexagon-center';
+            centerHexagon.innerHTML =
+                '<svg class="hexagon-svg" viewBox="' + hexagonViewBox + '" xmlns="http://www.w3.org/2000/svg">' +
+                '<path d="' + hexagonPath + '" fill="#9e9e9e" stroke="#1e1e1e" stroke-width="2"/>' +
+                '</svg>';
+            honeycombContainer.appendChild(centerHexagon);
+
+            // 点击中心灰色六边形重新聚合
+            centerHexagon.addEventListener('click', function(e) {
+                e.stopPropagation();
+                collapseHoneycomb(container, honeycombContainer);
+            });
+
+            // 计算蜂窝布局位置 - 使用标准蜂窝坐标系
+            // 统一使用相同尺寸的六边形，确保完美对齐
+            var hexSize = 21; // 六边形边长（从中心到顶点的距离）
+            // 对于纵向六边形(pointy topped)：
+            // - 水平间距 = hexSize * sqrt(3)
+            // - 垂直间距 = hexSize * 1.5
+
+            // 蜂窝坐标系中的6个方向向量（从中心到6个邻居）
+            // 使用轴向坐标系 (q, r)
+            var hexDirections = [
+                { q: 0, r: -1 },   // 上
+                { q: 1, r: -1 },   // 右上
+                { q: 1, r: 0 },    // 右下
+                { q: 0, r: 1 },    // 下
+                { q: -1, r: 1 },   // 左下
+                { q: -1, r: 0 }    // 左上
+            ];
+
+            // 将蜂窝坐标转换为像素坐标 - 纵向六边形(pointy topped)公式
+            // x = size * sqrt(3) * (q + r/2)
+            // y = size * 3/2 * r
+            function hexToPixel(q, r) {
+                var x = hexSize * Math.sqrt(3) * (q + r / 2);
+                var y = hexSize * 1.5 * r;
+                return { x: x, y: y };
+            }
+
+            // 根据设备数量动态计算蜂窝布局位置
+            var positions = [];
+            var deviceCount = devices.length;
+
+            // 生成蜂窝坐标 - 从中心向外螺旋扩展
+            function generateHoneycombCoords(count) {
+                var coords = [];
+                var layer = 1; // 从第一层开始（距离中心为1）
+                
+                while (coords.length < count) {
+                    // 当前层的所有坐标
+                    var layerCoords = getLayerCoords(layer);
+                    for (var i = 0; i < layerCoords.length && coords.length < count; i++) {
+                        coords.push(layerCoords[i]);
+                    }
+                    layer++;
+                }
+                return coords;
+            }
+
+            // 获取指定层的所有蜂窝坐标 - 标准蜂窝算法
+            function getLayerCoords(layer) {
+                var coords = [];
+                
+                // 标准蜂窝坐标生成：从 (0, -layer) 开始，沿6个方向各走 layer 步
+                // 方向顺序：右下、下、左下、左上、上、右上
+                var x = 0;
+                var y = -layer;
+                
+                // 6个方向向量
+                var directions = [
+                    { q: 1, r: 0 },   // 右下
+                    { q: 0, r: 1 },   // 下
+                    { q: -1, r: 1 },  // 左下
+                    { q: -1, r: 0 },  // 左上
+                    { q: 0, r: -1 },  // 上
+                    { q: 1, r: -1 }   // 右上
+                ];
+                
+                for (var i = 0; i < 6; i++) {
+                    for (var j = 0; j < layer; j++) {
+                        // 避免重复添加起点（当回到起点时）
+                        var isDuplicate = false;
+                        for (var k = 0; k < coords.length; k++) {
+                            if (coords[k].q === x && coords[k].r === y) {
+                                isDuplicate = true;
+                                break;
+                            }
+                        }
+                        if (!isDuplicate) {
+                            coords.push({ q: x, r: y });
+                        }
+                        x += directions[i].q;
+                        y += directions[i].r;
+                    }
+                }
+                
+                return coords;
+            }
+
+            // 生成足够的蜂窝坐标
+            var honeycombCoords = generateHoneycombCoords(deviceCount);
+            
+            // 将坐标转换为像素位置
+            for (var i = 0; i < deviceCount; i++) {
+                var coord = honeycombCoords[i];
+                var pixel = hexToPixel(coord.q, coord.r);
+                positions.push({
+                    x: pixel.x,
+                    y: pixel.y,
+                    device: devices[i]
+                });
+            }
+
+            // 创建设备六边形
+            positions.forEach(function(pos, index) {
+                var deviceHexagon = document.createElement('div');
+                deviceHexagon.className = 'hexagon-device';
+                // 居中定位：减去六边形的一半宽高 (48/2=24, 42/2=21)
+                deviceHexagon.style.left = 'calc(50% + ' + pos.x + 'px - 24px)';
+                deviceHexagon.style.top = 'calc(50% + ' + pos.y + 'px - 21px)';
+                deviceHexagon.innerHTML =
+                    '<svg class="hexagon-svg" viewBox="' + hexagonViewBox + '" xmlns="http://www.w3.org/2000/svg">' +
+                    '<path d="' + hexagonPath + '" fill="#4a90e2" stroke="#1e1e1e" stroke-width="2"/>' +
+                    '</svg>';
+
+                // 点击设备 - 打开设备详情弹窗
+                deviceHexagon.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    console.log('DEVICE_CLICK:' + JSON.stringify(pos.device));
+
+                    // 打开设备详情弹窗
+                    openDeviceModal({
+                        deviceId: pos.device.deviceId,
+                        deviceName: pos.device.deviceName,
+                        area: pos.device.area,
+                        isOnline: pos.device.isOnline,
+                        lng: pos.device.lng,
+                        lat: pos.device.lat
+                    });
+
+                    // 同时通知Python（用于记录或其他处理）
+                    if (mapHandler) {
+                        mapHandler.onDeviceClicked(JSON.stringify(pos.device));
+                    }
+                });
+
+                // 鼠标悬停显示信息提示（与独立设备保持一致）
+                var deviceTooltip = null;
+                deviceHexagon.addEventListener('mouseenter', function(e) {
+                    e.stopPropagation();
+                    if (deviceTooltip) {
+                        deviceTooltip.remove();
+                    }
+                    deviceTooltip = document.createElement('div');
+                    deviceTooltip.className = 'device-tooltip';
+                    deviceTooltip.innerHTML = createDeviceInfoWindow(pos.device);
+                    deviceTooltip.style.cssText = 'position:fixed;z-index:100000;pointer-events:none;display:none;';
+                    document.body.appendChild(deviceTooltip);
+                });
+
+                deviceHexagon.addEventListener('mousemove', function(e) {
+                    e.stopPropagation();
+                    if (deviceTooltip) {
+                        deviceTooltip.style.display = 'block';
+                        deviceTooltip.style.left = (e.clientX + 10) + 'px';
+                        deviceTooltip.style.top = (e.clientY - 10) + 'px';
+                    }
+                });
+
+                deviceHexagon.addEventListener('mouseleave', function(e) {
+                    e.stopPropagation();
+                    if (deviceTooltip) {
+                        deviceTooltip.remove();
+                        deviceTooltip = null;
+                    }
+                });
+
+                honeycombContainer.appendChild(deviceHexagon);
+            });
+
+            honeycombContainer.classList.add('show');
+        }
+
+        // 收起蜂窝布局
+        function collapseHoneycomb(container, honeycombContainer) {
+            honeycombContainer.classList.remove('show');
+            honeycombContainer.innerHTML = '';
+            container.classList.remove('expanded');
+            container.dataset.expanded = 'false';
+            container.style.zIndex = '1';
+
+            // 找到对应的高德地图标记并取消置顶
+            for (var key in markers) {
+                var marker = markers[key];
+                if (marker && marker.getContent() === container) {
+                    marker.setTop(false);
+                    break;
+                }
+            }
+        }
+
+        // 将元素置顶
+        function bringToFront(element) {
+            // 重置所有聚合容器的z-index
+            var allClusters = document.querySelectorAll('.hexagon-cluster-container');
+            allClusters.forEach(function(cluster) {
+                cluster.style.zIndex = '1';
+                // 移除其他展开的置顶状态
+                if (cluster !== element && cluster.dataset.expanded === 'true') {
+                    cluster.classList.remove('expanded');
+                    cluster.dataset.expanded = 'false';
+                    var honeycomb = cluster.querySelector('.honeycomb-container');
+                    if (honeycomb) {
+                        honeycomb.classList.remove('show');
+                    }
+                }
+            });
+            // 设置当前容器为最高
+            element.style.zIndex = '99999';
+
+            // 找到对应的高德地图标记并置顶
+            for (var key in markers) {
+                var marker = markers[key];
+                if (marker && marker.getContent() === element) {
+                    marker.setTop(true);
+                    break;
+                }
+            }
+        }
+
+        // 关闭所有聚合展开
+        function closeAllClusterPanels() {
+            var allClusters = document.querySelectorAll('.hexagon-cluster-container');
+            allClusters.forEach(function(cluster) {
+                if (cluster.dataset.expanded === 'true') {
+                    var honeycomb = cluster.querySelector('.honeycomb-container');
+                    if (honeycomb) {
+                        collapseHoneycomb(cluster, honeycomb);
+                    }
+                }
+            });
+        }
+
+        // 更新设备标记显示（根据选中的区域筛选，支持聚合）
+        function updateDeviceMarkers() {
+            // 先清除所有标记
+            clearAllMarkers();
+
+            // 获取所有选中的区域路径
+            var selectedPaths = [];
+            if (selectedAreaKeys.size > 0) {
+                areaData.forEach(function(node) {
+                    collectSelectedPaths(node, selectedPaths);
+                });
+            }
+
+            // 筛选设备
+            var filteredDevices = deviceData.filter(function(device) {
+                if (selectedAreaKeys.size === 0) {
+                    return true; // 没有选中区域，显示所有设备
+                }
+                return isDeviceInSelectedAreas(device, selectedPaths);
+            });
+
+            // 按经纬度分组
+            clusterGroups = {};
+            filteredDevices.forEach(function(device) {
+                if (!device.lng || !device.lat) return;
+                var clusterKey = device.lng + ',' + device.lat;
+                if (!clusterGroups[clusterKey]) {
+                    clusterGroups[clusterKey] = [];
+                }
+                clusterGroups[clusterKey].push(device);
+            });
+
+            // 显示设备标记（聚合或单个）
+            for (var clusterKey in clusterGroups) {
+                var devices = clusterGroups[clusterKey];
+                if (devices.length > 1) {
+                    // 多个设备，显示聚合标记
+                    showClusterMarker(clusterKey, devices);
+                } else {
+                    // 单个设备，显示普通标记
+                    showDeviceMarker(devices[0]);
+                }
+            }
+        }
+
+        // 收集选中的区域路径
+        function collectSelectedPaths(node, selectedPaths) {
+            if (selectedAreaKeys.has(node._key)) {
+                selectedPaths.push(node._path || [node.name]);
+            }
+            if (node.children) {
+                node.children.forEach(function(child) {
+                    collectSelectedPaths(child, selectedPaths);
+                });
+            }
+        }
+
+        // 判断设备是否属于选中的区域
+        function isDeviceInSelectedAreas(device, selectedPaths) {
+            if (!device.areaPath || device.areaPath.length === 0) {
+                return false;
+            }
+
+            for (var i = 0; i < selectedPaths.length; i++) {
+                var selectedPath = selectedPaths[i];
+                // 检查设备的区域路径是否匹配选中的区域路径
+                if (isPathMatch(device.areaPath, selectedPath)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 检查路径是否匹配（设备路径以选中路径开头）
+        function isPathMatch(devicePath, selectedPath) {
+            if (selectedPath.length > devicePath.length) {
+                return false;
+            }
+            for (var i = 0; i < selectedPath.length; i++) {
+                if (devicePath[i] !== selectedPath[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        // 清除所有多边形
+        function clearAllPolygons() {
+            for (var name in polygons) {
+                if (polygons[name]) {
+                    polygons[name].setMap(null);
+                }
+            }
+            polygons = {};
+        }
+
+        // 渲染树形结构
+        function renderTree() {
+            var treeContainer = document.getElementById('area-tree');
+            treeContainer.innerHTML = '';
+            
+            areaData.forEach(function(item) {
+                renderTreeNode(item, treeContainer, 0);
+            });
+        }
+
+        // 渲染单个树节点
+        function renderTreeNode(node, container, level) {
+            var nodeDiv = document.createElement('div');
+            nodeDiv.className = 'tree-node';
+            
+            var hasChildren = node.children && node.children.length > 0;
+            var hasCoords = node.area && node.area.coords && node.area.coords.length > 0;
+            
+            var contentDiv = document.createElement('div');
+            contentDiv.className = 'tree-node-content';
+            contentDiv.style.paddingLeft = (level * 15) + 'px';
+            
+            // 展开/折叠按钮
+            var toggleSpan = document.createElement('span');
+            toggleSpan.className = 'tree-toggle' + (hasChildren ? '' : ' no-children');
+            toggleSpan.textContent = hasChildren ? '▶' : '';
+            toggleSpan.onclick = function(e) {
+                e.stopPropagation();
+                toggleNode(nodeDiv, toggleSpan);
+            };
+            
+            // 复选框
+            var checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'tree-checkbox';
+            checkbox.checked = hasCoords; // 默认勾选有坐标的
+            checkbox.dataset.key = node._key;
+            checkbox.dataset.level = node.level;
+            checkbox.onchange = function() {
+                onCheckboxChange(node, checkbox.checked);
+            };
+            
+            // 标签
+            var labelSpan = document.createElement('span');
+            labelSpan.className = 'tree-label';
+            labelSpan.textContent = node.name;
+            
+            // 区域状态标记
+            var badgeSpan = document.createElement('span');
+            badgeSpan.className = 'area-badge ' + (hasCoords ? 'has-area' : 'no-area');
+            badgeSpan.textContent = hasCoords ? '已划分' : '未划分';
+            
+            contentDiv.appendChild(toggleSpan);
+            contentDiv.appendChild(checkbox);
+            contentDiv.appendChild(labelSpan);
+            contentDiv.appendChild(badgeSpan);
+            
+            nodeDiv.appendChild(contentDiv);
+            
+            // 子节点容器
+            if (hasChildren) {
+                var childrenDiv = document.createElement('div');
+                childrenDiv.className = 'tree-children';
+                childrenDiv.id = 'children-' + node._key;
+                
+                node.children.forEach(function(child) {
+                    renderTreeNode(child, childrenDiv, level + 1);
+                });
+                
+                nodeDiv.appendChild(childrenDiv);
+            }
+            
+            container.appendChild(nodeDiv);
+        }
+
+        // 展开/折叠节点
+        function toggleNode(nodeDiv, toggleSpan) {
+            var childrenDiv = nodeDiv.querySelector('.tree-children');
+            if (childrenDiv) {
+                if (childrenDiv.classList.contains('expanded')) {
+                    childrenDiv.classList.remove('expanded');
+                    toggleSpan.textContent = '▶';
+                } else {
+                    childrenDiv.classList.add('expanded');
+                    toggleSpan.textContent = '▼';
+                }
+            }
+        }
+
+        // 复选框变化处理
+        function onCheckboxChange(node, checked) {
+            console.log('区域', node.name, checked ? '显示' : '隐藏');
+            if (checked) {
+                selectedAreaKeys.add(node._key);
+                showArea(node, true);
+            } else {
+                selectedAreaKeys.delete(node._key);
+                hideArea(node._key);
+            }
+            // 更新设备显示
+            updateDeviceMarkers();
+        }
+
+        // 显示区域
+        function showArea(node, shouldFitView) {
+            if (!mapReady || !map || !node.area || !node.area.coords || node.area.coords.length === 0) {
+                return;
+            }
+
+            var polygonKey = node._key || node.name;
+            
+            // 如果已存在，先移除
+            if (polygons[polygonKey]) {
+                polygons[polygonKey].setMap(null);
+            }
+            
+            try {
+                var polygon = new AMap.Polygon({
+                    path: node.area.coords,
+                    fillColor: 'rgba(0, 100, 255, 0.3)',
+                    strokeColor: '#0066ff',
+                    strokeWeight: 2,
+                    extData: {name: node.name, info: node.area, path: node._path || [node.name]}
+                });
+
+                polygon.on('click', function(e) {
+                    var info = this.getExtData();
+                    console.log('AREA_CLICK:' + JSON.stringify(info));
+                    if (mapHandler) {
+                        mapHandler.onAreaClicked(JSON.stringify(info));
+                    }
+                });
+
+                polygon.setMap(map);
+                polygons[polygonKey] = polygon;
+                
+                if (shouldFitView !== false) {
+                    updateMapView();
+                }
+            } catch (e) {
+                console.error('添加区域失败:', e);
+            }
+        }
+
+        // 隐藏区域
+        function hideArea(key) {
+            if (polygons[key]) {
+                polygons[key].setMap(null);
+                delete polygons[key];
+            }
+        }
+
+        // 显示所有有坐标的区域
+        function showAllAreas() {
+            areaData.forEach(function(node) {
+                showAllAreasRecursive(node);
+            });
+            updateMapView();
+        }
+
+        function showAllAreasRecursive(node) {
+            if (node.area && node.area.coords && node.area.coords.length > 0) {
+                showArea(node, false);
+            }
+            if (node.children) {
+                node.children.forEach(function(child) {
+                    showAllAreasRecursive(child);
+                });
+            }
+        }
+
+        // 更新地图视野
+        function updateMapView() {
+            var visiblePolygons = [];
+            for (var name in polygons) {
+                visiblePolygons.push(polygons[name]);
+            }
+            if (visiblePolygons.length > 0) {
+                map.setFitView(visiblePolygons);
+            }
+        }
+
+        // 全选
+        function selectAll() {
+            selectedAreaKeys.clear();
+            var checkboxes = document.querySelectorAll('.tree-checkbox');
+            checkboxes.forEach(function(cb) {
+                cb.checked = true;
+                var key = cb.dataset.key;
+                selectedAreaKeys.add(key);
+                var node = findNodeByKey(areaData, key);
+                if (node) {
+                    showArea(node, false);
+                }
+            });
+            updateMapView();
+            // 更新设备显示
+            updateDeviceMarkers();
+        }
+
+        // 取消全选
+        function deselectAll() {
+            selectedAreaKeys.clear();
+            var checkboxes = document.querySelectorAll('.tree-checkbox');
+            checkboxes.forEach(function(cb) {
+                cb.checked = false;
+                hideArea(cb.dataset.key);
+            });
+            // 更新设备显示（取消全选后显示所有设备）
+            updateDeviceMarkers();
+        }
+
+        // 根据唯一 key 查找节点
+        function findNodeByKey(nodes, key) {
+            for (var i = 0; i < nodes.length; i++) {
+                var node = nodes[i];
+                if (node._key === key) {
+                    return node;
+                }
+                if (node.children) {
+                    var found = findNodeByKey(node.children, key);
+                    if (found) return found;
+                }
+            }
+            return null;
+        }
+
+        // 展开所有
+        function expandAll() {
+            var childrenDivs = document.querySelectorAll('.tree-children');
+            childrenDivs.forEach(function(div) {
+                div.classList.add('expanded');
+            });
+            var toggles = document.querySelectorAll('.tree-toggle:not(.no-children)');
+            toggles.forEach(function(toggle) {
+                toggle.textContent = '▼';
+            });
+        }
+
+        // ==================== 控制面板显示/隐藏 ====================
+        // 切换控制面板显示/隐藏（从filter-actions按钮调用）
+        function toggleControlPanel() {
+            var controlPanel = document.getElementById('control-panel');
+            if (controlPanel.style.display === 'none') {
+                controlPanel.style.display = 'block';
+            } else {
+                controlPanel.style.display = 'none';
+            }
+        }
+
+        // ==================== 设备详情弹窗功能 ====================
+        var currentModalDevice = null; // 当前弹窗显示的设备
+        var deviceModalUpdateTimer = null; // 弹窗数据更新定时器
+
+        // 打开设备详情弹窗
+        function openDeviceModal(deviceInfo) {
+            currentModalDevice = deviceInfo;
+            var overlay = document.getElementById('device-modal-overlay');
+            overlay.classList.add('show');
+
+            // 初始化显示设备信息
+            updateDeviceModalDisplay(deviceInfo);
+
+            // 请求实时数据
+            requestDeviceRealtimeData(deviceInfo.deviceId);
+
+            // 启动定时更新（每3秒更新一次）
+            if (deviceModalUpdateTimer) {
+                clearInterval(deviceModalUpdateTimer);
+            }
+            deviceModalUpdateTimer = setInterval(function() {
+                if (currentModalDevice) {
+                    requestDeviceRealtimeData(currentModalDevice.deviceId);
+                }
+            }, 3000);
+        }
+
+        // 关闭设备详情弹窗
+        function closeDeviceModal() {
+            var overlay = document.getElementById('device-modal-overlay');
+            overlay.classList.remove('show');
+            currentModalDevice = null;
+
+            // 停止定时更新
+            if (deviceModalUpdateTimer) {
+                clearInterval(deviceModalUpdateTimer);
+                deviceModalUpdateTimer = null;
+            }
+        }
+
+        // 基础数据列（设备管理页，排除勾选、工作计划、编辑、删除、历史数据等操作列）
+        // 注意：area1/2/3在基础信息中显示，不在实时数据中显示
+        var BASE_DATA_COLS = ['deviceId', 'deviceName', 'area1', 'area2', 'area3', 'lng', 'lat', 'timezone', 'address', 'addDate', 'isOnline'];
+
+        // 更新弹窗显示
+        function updateDeviceModalDisplay(deviceInfo) {
+            // 基础数据（设备管理页）
+            document.getElementById('modal-device-id').textContent = deviceInfo.deviceId || '-';
+            document.getElementById('modal-device-name').textContent = deviceInfo.deviceName || '-';
+
+            // 区域显示
+            var areaText = '';
+            if (deviceInfo.area1) areaText += deviceInfo.area1;
+            if (deviceInfo.area2) areaText += '/' + deviceInfo.area2;
+            if (deviceInfo.area3) areaText += '/' + deviceInfo.area3;
+            document.getElementById('modal-device-area').textContent = areaText || '-';
+
+            // 在线状态 - 优先使用isOnline字段，如果没有则根据latestTime判断
+            var statusEl = document.getElementById('modal-device-status');
+            var isOnline = deviceInfo.isOnline;
+            // 如果isOnline未定义但有latestTime，根据时间判断（5分钟内为在线）
+            if (isOnline === undefined && deviceInfo.latestTime && deviceInfo.latestTime !== '-') {
+                try {
+                    var latestTime = new Date(deviceInfo.latestTime);
+                    var now = new Date();
+                    var diffMinutes = (now - latestTime) / 1000 / 60;
+                    isOnline = diffMinutes < 5; // 5分钟内认为在线
+                } catch (e) {
+                    isOnline = false;
+                }
+            }
+
+            if (isOnline) {
+                statusEl.textContent = '在线';
+                statusEl.className = 'device-info-value online';
+            } else {
+                statusEl.textContent = '离线';
+                statusEl.className = 'device-info-value offline';
+            }
+
+            // 位置信息（经度、纬度、时区合并显示）
+            var locationText = '';
+            if (deviceInfo.lng && deviceInfo.lat) {
+                locationText = deviceInfo.lng + ', ' + deviceInfo.lat;
+            }
+            if (deviceInfo.timezone) {
+                locationText += (locationText ? ' | ' : '') + 'TZ:' + deviceInfo.timezone;
+            }
+            document.getElementById('modal-device-location').textContent = locationText || '-';
+
+            // 其他基础数据
+            document.getElementById('modal-device-address').textContent = deviceInfo.address || '-';
+            document.getElementById('modal-device-adddate').textContent = deviceInfo.addDate || '-';
+
+            // 实时数据区域（设备应用页动态列）
+            var realtimeRows = document.getElementById('modal-realtime-rows');
+            realtimeRows.innerHTML = '';
+
+            // 遍历所有数据字段，只显示非基础数据列（实时数据）
+            var hasRealtimeData = false;
+            for (var key in deviceInfo) {
+                // 排除基础数据列
+                if (BASE_DATA_COLS.indexOf(key) === -1 && deviceInfo[key] !== undefined && deviceInfo[key] !== null && deviceInfo[key] !== '') {
+                    hasRealtimeData = true;
+                    var row = document.createElement('div');
+                    row.className = 'device-info-row';
+
+                    var label = document.createElement('span');
+                    label.className = 'device-info-label';
+                    // 将驼峰命名转换回可读格式
+                    label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+
+                    var value = document.createElement('span');
+                    value.className = 'device-info-value';
+                    value.textContent = deviceInfo[key];
+
+                    row.appendChild(label);
+                    row.appendChild(value);
+                    realtimeRows.appendChild(row);
+                }
+            }
+
+            // 如果没有实时数据，显示提示
+            if (!hasRealtimeData) {
+                var noDataRow = document.createElement('div');
+                noDataRow.className = 'device-info-row';
+                noDataRow.innerHTML = '<span class="device-info-label" style="color: #999; text-align: center; width: 100%;">暂无实时数据</span>';
+                realtimeRows.appendChild(noDataRow);
+            }
+
+            // 检查是否有调光值字段，显示调光控制区域（仅首次打开时设置，不随实时数据更新）
+            var hasDimming = false;
+            for (var key in deviceInfo) {
+                if (key.toLowerCase().indexOf('调光') !== -1 || key.toLowerCase().indexOf('bri') !== -1 || key.toLowerCase().indexOf('dim') !== -1) {
+                    hasDimming = true;
+                    break;
+                }
+            }
+
+            // 调光控制区域始终显示（如果有调光字段），不随实时数据更新值
+            document.getElementById('modal-dimming-section').style.display = hasDimming ? 'block' : 'none';
+        }
+
+        // 请求设备实时数据
+        function requestDeviceRealtimeData(deviceId) {
+            if (mapHandler && mapHandler.requestDeviceData) {
+                mapHandler.requestDeviceData(deviceId);
+            } else {
+                // 备用：通过console.log发送请求
+                console.log('REQUEST_DEVICE_DATA:' + deviceId);
+            }
+        }
+
+        // 接收Python传来的设备实时数据
+        function updateDeviceRealtimeData(deviceData) {
+            if (!currentModalDevice || currentModalDevice.deviceId !== deviceData.deviceId) {
+                return; // 弹窗未打开或设备不匹配，不更新
+            }
+
+            // 保存当前调光控制区域的值（不随实时数据更新）
+            var dimmingSlider = document.getElementById('modal-dimming-slider');
+            var dimmingValue = document.getElementById('modal-dimming-value');
+            var savedSliderValue = dimmingSlider ? dimmingSlider.value : null;
+            var savedValueText = dimmingValue ? dimmingValue.textContent : null;
+
+            // 合并数据并更新显示
+            Object.assign(currentModalDevice, deviceData);
+            updateDeviceModalDisplay(currentModalDevice);
+
+            // 恢复调光控制区域的值（保持用户设置，不随实时数据变化）
+            if (dimmingSlider && savedSliderValue !== null) {
+                dimmingSlider.value = savedSliderValue;
+            }
+            if (dimmingValue && savedValueText !== null) {
+                dimmingValue.textContent = savedValueText;
+            }
+        }
+
+        // 弹窗调光值更新
+        function updateModalDimmingValue(value) {
+            document.getElementById('modal-dimming-value').textContent = value + '%';
+        }
+
+        // 指令模板（从Python传递）
+        var sendOrderTemplates = {};
+
+        // 设置指令模板（由Python调用）
+        function setSendOrderTemplates(templates) {
+            sendOrderTemplates = templates;
+            console.log('指令模板已加载:', Object.keys(templates));
+        }
+
+        // 获取UTC时间字符串（与Python get_time("UTC") 格式一致: YYYY-MM-DD HH:MM:SS）
+        function getUTCTimeString() {
+            var now = new Date();
+            var utcYear = now.getUTCFullYear();
+            var utcMonth = String(now.getUTCMonth() + 1).padStart(2, '0');
+            var utcDate = String(now.getUTCDate()).padStart(2, '0');
+            var utcHours = String(now.getUTCHours()).padStart(2, '0');
+            var utcMinutes = String(now.getUTCMinutes()).padStart(2, '0');
+            var utcSeconds = String(now.getUTCSeconds()).padStart(2, '0');
+            return utcYear + '-' + utcMonth + '-' + utcDate + ' ' + utcHours + ':' + utcMinutes + ':' + utcSeconds;
+        }
+
+        // 弹窗设备控制
+        function modalDeviceControl(command) {
+            if (!currentModalDevice) return;
+
+            var deviceId = currentModalDevice.deviceId;
+            var template = sendOrderTemplates[command];
+
+            if (!template) {
+                console.error('未找到指令模板:', command);
+                return;
+            }
+
+            // 复制模板并填充数据
+            var order = JSON.parse(JSON.stringify(template));
+            order.SN = deviceId;
+            order.TM = getUTCTimeString();  // 使用与Python一致的UTC时间格式
+            order.ID = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+
+            // 调光命令特殊处理
+            if (command === 'dimming' && order.DT && order.DT.cnCtrl) {
+                order.DT.cnCtrl[0].bri = parseInt(document.getElementById('modal-dimming-slider').value);
+            }
+
+            var controlData = {
+                command: command,
+                area: '单个设备',
+                deviceCount: 1,
+                deviceIds: [deviceId],
+                order: order
+            };
+
+            console.log('DEVICE_CONTROL:' + JSON.stringify(controlData));
+
+            // 通过QWebChannel发送到Python
+            if (mapHandler && mapHandler.onAreaControl) {
+                mapHandler.onAreaControl(JSON.stringify(controlData));
+            }
+
+            // 显示反馈
+            showDeviceControlFeedback(command);
+        }
+
+        // 显示设备控制反馈
+        function showDeviceControlFeedback(commandType) {
+            var feedback = document.createElement('div');
+            feedback.style.cssText = 'position: fixed; bottom: 20px; right: 20px; padding: 10px 20px; background: #67c23a; color: white; border-radius: 4px; font-size: 13px; font-weight: bold; z-index: 300000; box-shadow: 0 2px 8px rgba(0,0,0,0.3);';
+
+            var commandNames = {
+                'on': '开灯',
+                'off': '关灯',
+                'dimming': '调光',
+                'read': '读取'
+            };
+            feedback.textContent = '已发送' + commandNames[commandType] + '指令';
+
+            document.body.appendChild(feedback);
+
+            setTimeout(function() {
+                feedback.remove();
+            }, 3000);
+        }
+
+        // 初始化设备弹窗事件（在DOM加载完成后调用）
+        function initDeviceModalEvents() {
+            var overlay = document.getElementById('device-modal-overlay');
+            if (overlay) {
+                overlay.addEventListener('click', function(e) {
+                    if (e.target === this) {
+                        closeDeviceModal();
+                    }
+                });
+            }
+        }
+
+        // ==================== 区域设备控制功能 ====================
+        var currentSelectedArea = null; // 当前选中的区域
+
+        // 获取当前选中的区域信息
+        function getSelectedAreaInfo() {
+            if (selectedAreaKeys.size === 0) {
+                return null;
+            }
+            if (selectedAreaKeys.size === 1) {
+                // 单选区域
+                var key = Array.from(selectedAreaKeys)[0];
+                return findNodeByKey(areaData, key);
+            }
+            // 多选区域，返回所有选中的区域
+            var selectedAreas = [];
+            areaData.forEach(function(node) {
+                collectSelectedAreas(node, selectedAreas);
+            });
+            return { multiple: true, areas: selectedAreas };
+        }
+
+        // 收集所有选中的区域
+        function collectSelectedAreas(node, selectedAreas) {
+            if (selectedAreaKeys.has(node._key)) {
+                selectedAreas.push(node);
+            }
+            if (node.children) {
+                node.children.forEach(function(child) {
+                    collectSelectedAreas(child, selectedAreas);
+                });
+            }
+        }
+
+        // 更新选中区域显示
+        function updateSelectedAreaDisplay() {
+            var infoDiv = document.getElementById('selected-area-info');
+            var areaInfo = getSelectedAreaInfo();
+
+            if (!areaInfo) {
+                infoDiv.innerHTML = '请选择要控制的区域';
+                infoDiv.style.display = 'block';
+                currentSelectedArea = null;
+                return;
+            }
+
+            currentSelectedArea = areaInfo;
+
+            if (areaInfo.multiple) {
+                infoDiv.innerHTML = '已选择 ' + areaInfo.areas.length + ' 个区域';
+            } else {
+                infoDiv.innerHTML = '当前区域: <strong>' + areaInfo.name + '</strong>';
+            }
+            infoDiv.style.display = 'block';
+        }
+
+        // 获取选中区域下的所有设备
+        function getDevicesInSelectedAreas() {
+            var areaInfo = getSelectedAreaInfo();
+            if (!areaInfo) return [];
+
+            var selectedPaths = [];
+            if (areaInfo.multiple) {
+                areaInfo.areas.forEach(function(area) {
+                    selectedPaths.push(area._path || [area.name]);
+                });
+            } else {
+                selectedPaths.push(areaInfo._path || [areaInfo.name]);
+            }
+
+            // 筛选设备
+            return deviceData.filter(function(device) {
+                if (!device.areaPath || device.areaPath.length === 0) {
+                    return false;
+                }
+                for (var i = 0; i < selectedPaths.length; i++) {
+                    if (isPathMatch(device.areaPath, selectedPaths[i])) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+        }
+
+        // 发送控制命令到Python（使用指令模板）
+        function sendControlCommand(commandType, params) {
+            var devices = getDevicesInSelectedAreas();
+            if (devices.length === 0) {
+                alert('选中的区域下没有设备');
+                return;
+            }
+
+            var template = sendOrderTemplates[commandType];
+            if (!template) {
+                console.error('未找到指令模板:', commandType);
+                return;
+            }
+
+            var deviceIds = devices.map(function(d) { return d.deviceId; });
+            var areaInfo = getSelectedAreaInfo();
+            var areaName = areaInfo.multiple ? ('多个区域(' + areaInfo.areas.length + ')') : areaInfo.name;
+
+            // 为每个设备生成指令
+            var orders = deviceIds.map(function(deviceId) {
+                var order = JSON.parse(JSON.stringify(template));
+                order.SN = deviceId;
+                order.TM = getUTCTimeString();  // 使用与Python一致的UTC时间格式
+                order.ID = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+
+                // 调光命令特殊处理
+                if (commandType === 'dimming' && order.DT && order.DT.cnCtrl && params) {
+                    order.DT.cnCtrl[0].bri = params.brightness || 50;
+                }
+
+                return order;
+            });
+
+            var controlData = {
+                command: commandType,
+                area: areaName,
+                deviceCount: deviceIds.length,
+                deviceIds: deviceIds,
+                orders: orders
+            };
+
+            console.log('AREA_CONTROL:' + JSON.stringify(controlData));
+
+            // 通过QWebChannel发送到Python
+            if (mapHandler && mapHandler.onAreaControl) {
+                mapHandler.onAreaControl(JSON.stringify(controlData));
+            } else {
+                // 备用：通过console.log发送
+                console.log('SEND_CONTROL:' + JSON.stringify(controlData));
+            }
+
+            // 显示操作提示
+            showControlFeedback(commandType, deviceIds.length);
+        }
+
+        // 显示操作反馈
+        function showControlFeedback(commandType, count) {
+            var feedback = document.getElementById('control-feedback');
+            var commandNames = {
+                'on': '开灯',
+                'off': '关灯',
+                'dimming': '调光'
+            };
+            feedback.textContent = '已向' + count + '个设备发送' + commandNames[commandType] + '指令';
+            feedback.style.display = 'block';
+            setTimeout(function() {
+                feedback.style.display = 'none';
+            }, 5000);
+        }
+
+        // 开灯
+        function turnOnLights() {
+            sendControlCommand('on');
+        }
+
+        // 关灯
+        function turnOffLights() {
+            sendControlCommand('off');
+        }
+
+        // 调光
+        function dimLights() {
+            var value = document.getElementById('dimming-slider').value;
+            sendControlCommand('dimming', { brightness: parseInt(value) });
+        }
+
+        // 更新调光值显示
+        function updateDimmingValue(value) {
+            document.getElementById('dimming-value').textContent = value + '%';
+        }
+
+        // 重写复选框变化处理，添加区域显示更新
+        var originalOnCheckboxChange = onCheckboxChange;
+        onCheckboxChange = function(node, checked) {
+            originalOnCheckboxChange(node, checked);
+            updateSelectedAreaDisplay();
+        };
+
+        // 重写全选/取消全选，添加区域显示更新
+        var originalSelectAll = selectAll;
+        selectAll = function() {
+            originalSelectAll();
+            updateSelectedAreaDisplay();
+        };
+
+        var originalDeselectAll = deselectAll;
+        deselectAll = function() {
+            originalDeselectAll();
+            updateSelectedAreaDisplay();
+        };
+
+        window.isDisplayMapReady = function() {
+            return !!map && mapReady;
+        };
+
+        window.onload = function() {
+            // 初始化设备弹窗事件
+            initDeviceModalEvents();
+
+            if (typeof qt !== 'undefined') {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    mapHandler = channel.objects.mapHandler;
+                    console.log('QWebChannel 初始化成功');
+                    initMap();
+                });
+            } else {
+                console.log('qt 对象未定义，直接初始化地图');
+                initMap();
+            }
+        };
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+    <div class="filter-panel">
+        <h3>区域筛选</h3>
+        <div id="status">加载中...</div>
+        <div id="area-tree"></div>
+        <div class="filter-actions">
+            <button class="filter-btn" onclick="selectAll()">全选</button>
+            <button class="filter-btn" onclick="deselectAll()">取消全选</button>
+            <button class="filter-btn" onclick="expandAll()">展开全部</button>
+            <button class="filter-btn" onclick="toggleControlPanel()">控制展开</button>
+        </div>
+        <!-- 区域设备控制 -->
+        <div class="control-actions" id="control-panel" style="display: none;">
+            <div class="control-header">
+                <h4>区域设备控制</h4>
+            </div>
+            <div class="selected-area-info" id="selected-area-info">请选择要控制的区域</div>
+            <div class="control-row">
+                <button class="control-btn btn-on" onclick="turnOnLights()">开灯</button>
+                <button class="control-btn btn-off" onclick="turnOffLights()">关灯</button>
+            </div>
+            <div class="control-row">
+                <button class="control-btn btn-dim" onclick="dimLights()">调光</button>
+            </div>
+            <div class="dimming-container">
+                <input type="range" id="dimming-slider" class="dimming-slider" min="0" max="100" value="50" oninput="updateDimmingValue(this.value)">
+                <span class="dimming-value" id="dimming-value">50%</span>
+            </div>
+            <div id="control-feedback" style="display: none; margin-top: 4px; padding: 4px 6px; background: #67c23a; border-radius: 3px; font-size: 11px; color: white; text-align: center; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></div>
+        </div>
+    </div>
+
+    <!-- 设备详情弹窗 -->
+    <div class="device-modal-overlay" id="device-modal-overlay">
+        <div class="device-modal">
+            <div class="device-modal-header">
+                <h3 id="device-modal-title">设备详情</h3>
+                <button class="device-modal-close" onclick="closeDeviceModal()">×</button>
+            </div>
+            <div class="device-modal-body" id="device-modal-body">
+                <!-- 基础数据（设备管理页） -->
+                <div class="device-info-section">
+                    <h4>基础信息</h4>
+                    <div id="modal-base-rows">
+                        <div class="device-info-row">
+                            <span class="device-info-label">设备号</span>
+                            <span class="device-info-value" id="modal-device-id">-</span>
+                        </div>
+                        <div class="device-info-row">
+                            <span class="device-info-label">设备名称</span>
+                            <span class="device-info-value" id="modal-device-name">-</span>
+                        </div>
+                        <div class="device-info-row">
+                            <span class="device-info-label">在线状态</span>
+                            <span class="device-info-value" id="modal-device-status">-</span>
+                        </div>
+                        <div class="device-info-row">
+                            <span class="device-info-label">所属区域</span>
+                            <span class="device-info-value" id="modal-device-area">-</span>
+                        </div>
+                        <!-- 经纬度时区在一行显示 -->
+                        <div class="device-info-row location-row">
+                            <span class="device-info-label">位置</span>
+                            <span class="device-info-value" id="modal-device-location">-</span>
+                        </div>
+                        <div class="device-info-row">
+                            <span class="device-info-label">地址</span>
+                            <span class="device-info-value" id="modal-device-address">-</span>
+                        </div>
+                        <div class="device-info-row">
+                            <span class="device-info-label">添加日期</span>
+                            <span class="device-info-value" id="modal-device-adddate">-</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- 实时数据（设备应用页动态列） -->
+                <div class="device-info-section" id="modal-realtime-section">
+                    <h4>实时数据</h4>
+                    <div id="modal-realtime-rows" class="two-column-grid"></div>
+                </div>
+                <!-- 调光设置 -->
+                <div class="device-info-section" id="modal-dimming-section" style="display: none;">
+                    <h4>调光控制</h4>
+                    <div class="device-info-row">
+                        <span class="device-info-label">当前亮度</span>
+                        <span class="device-info-value" id="modal-device-brightness">-</span>
+                    </div>
+                    <div class="device-dimming-row">
+                        <input type="range" id="modal-dimming-slider" class="device-dimming-slider" min="0" max="100" value="50" oninput="updateModalDimmingValue(this.value)">
+                        <span class="device-dimming-value" id="modal-dimming-value">50%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="device-modal-footer">
+                <button class="device-control-btn device-btn-on" onclick="modalDeviceControl('on')">开灯</button>
+                <button class="device-control-btn device-btn-off" onclick="modalDeviceControl('off')">关灯</button>
+                <button class="device-control-btn device-btn-dim" onclick="modalDeviceControl('dimming')">调光</button>
+                <button class="device-control-btn device-btn-read" onclick="modalDeviceControl('read')">读取</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

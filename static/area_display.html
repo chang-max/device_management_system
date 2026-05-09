@@ -1,0 +1,1367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>区域展示界面</title>
+    <script src="echarts.min.js"></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: #f0f0f0; overflow: hidden; }
+        .main-container { width: 100vw; height: 100vh; display: flex; flex-direction: row; }
+        
+        /* 左侧图表 */
+        .left-charts { width: 20%; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 8px; background: #f5f5f5; border-right: 2px solid #ddd; }
+        
+        /* 中间地图 */
+        .center-map { flex: 1; height: 100%; display: flex; flex-direction: column; background: #fff; position: relative; overflow: hidden; }
+        
+        /* 右侧图表 */
+        .right-charts { width: 20%; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 8px; background: #f5f5f5; border-left: 2px solid #ddd; }
+        
+        /* 图表面板 */
+        .chart-box { flex: 1; background: white; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+        .chart-header { padding: 4px 6px; background: #fafafa; border-bottom: 1px solid #eee; flex-shrink: 0; }
+        .chart-title { font-size: 11px; font-weight: bold; color: #333; margin-bottom: 2px; }
+        .area-selector { width: 100%; font-size: 10px; padding: 2px 4px; border: 1px solid #ddd; border-radius: 3px; }
+        .area-selector option.level-1 { font-weight: bold; background: #f0f0f0; }
+        .area-selector option.level-2 { padding-left: 15px; }
+        .area-selector option.level-3 { padding-left: 30px; color: #666; }
+        .chart-content { flex: 1; min-height: 0; position: relative; }
+        
+        /* 地图标签页 */
+        .map-tabs { display: flex; background: #fafafa; border-bottom: 1px solid #ddd; flex-shrink: 0; position: relative; z-index: 300; }
+        .map-tab { padding: 10px 16px; font-size: 13px; cursor: pointer; border: none; background: transparent; color: #666; border-bottom: 2px solid transparent; }
+        .map-tab:hover { color: #1890ff; background: #e6f7ff; }
+        .map-tab.active { color: #1890ff; border-bottom-color: #1890ff; background: #fff; }
+        
+        /* 地图内容 */
+        .map-content { flex: 1; position: relative; overflow: visible; background: #f0f0f0; }
+        .map-page { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: none; overflow: visible; }
+        .map-page.active { display: block; }
+        
+        /* 级联选择器样式 - 优化版 */
+        .cascader-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 220px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+            overflow: hidden;
+            border: 1px solid #e5e6eb;
+        }
+        .cascader-input {
+            width: 100%;
+            height: 40px;
+            padding: 0 12px;
+            border: 1px solid #e5e6eb;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #333;
+            transition: border 0.3s;
+        }
+        .cascader-input:hover { border-color: #409eff; }
+        .cascader-input.active { border-color: #409eff; }
+        .cascader-arrow { 
+            transition: transform 0.3s; 
+            font-size: 12px;
+            color: #666;
+        }
+        .cascader-input.active .cascader-arrow { transform: rotate(180deg); }
+        
+        .cascader-dropdown {
+            max-height: 320px;
+            overflow: hidden;
+            border-top: 1px solid #e5e6eb;
+            display: none;
+        }
+        .cascader-dropdown.show { display: block; }
+        
+        .cascader-container {
+            padding: 10px;
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .cascader-container::-webkit-scrollbar { width: 6px; }
+        .cascader-container::-webkit-scrollbar-thumb { background: #dcdfe6; border-radius: 3px; }
+        
+        .cascader-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+        }
+        .cascader-item:hover { background-color: #f5f7fa; }
+        .cascader-item.selected { background-color: #ecf5ff; color: #409eff; }
+        
+        .cascader-item.level-1 { padding-left: 10px; font-weight: bold; }
+        .cascader-item.level-2 { padding-left: 30px; }
+        .cascader-item.level-3 { padding-left: 50px; font-size: 13px; color: #666; }
+        
+        .cascader-expand-icon {
+            margin-right: 6px;
+            font-size: 12px;
+            color: #666;
+            transition: transform 0.2s;
+            display: inline-block;
+            width: 12px;
+        }
+        .cascader-expand-icon.open { transform: rotate(90deg); }
+        
+        .cascader-children {
+            overflow: hidden;
+        }
+        
+        /* 图表级联选择器样式 */
+        .chart-cascader {
+            position: relative;
+            width: 100%;
+        }
+        .chart-cascader-input {
+            width: 100%;
+            height: 28px;
+            padding: 0 8px;
+            border: 1px solid #e5e6eb;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #333;
+            transition: border 0.3s;
+        }
+        .chart-cascader-input:hover { border-color: #409eff; }
+        .chart-cascader-input.active { border-color: #409eff; }
+        .chart-cascader-arrow { 
+            transition: transform 0.3s; 
+            font-size: 10px;
+            color: #666;
+        }
+        .chart-cascader-input.active .chart-cascader-arrow { transform: rotate(180deg); }
+        
+        .chart-cascader-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            width: 100%;
+            max-height: 200px;
+            background: #fff;
+            border: 1px solid #e5e6eb;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            display: none;
+            z-index: 200;
+        }
+        .chart-cascader-dropdown.show { display: block; }
+        
+        .chart-cascader-container {
+            padding: 6px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .chart-cascader-container::-webkit-scrollbar { width: 4px; }
+        .chart-cascader-container::-webkit-scrollbar-thumb { background: #dcdfe6; border-radius: 2px; }
+        
+        .chart-cascader-item {
+            padding: 5px 8px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 12px;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+        }
+        .chart-cascader-item:hover { background-color: #f5f7fa; }
+        .chart-cascader-item.selected { background-color: #ecf5ff; color: #409eff; }
+        
+        .chart-cascader-item.level-1 { padding-left: 8px; font-weight: bold; color: #333; }
+        .chart-cascader-item.level-2 { padding-left: 24px; }
+        .chart-cascader-item.level-3 { padding-left: 40px; font-size: 11px; color: #666; }
+        
+        .chart-cascader-expand-icon {
+            margin-right: 4px;
+            font-size: 10px;
+            color: #666;
+            transition: transform 0.2s;
+            display: inline-block;
+            width: 10px;
+        }
+        .chart-cascader-expand-icon.open { transform: rotate(90deg); }
+        
+        .chart-cascader-children {
+            overflow: hidden;
+        }
+        
+        /* 画布容器 */
+        .canvas-container { 
+            width: 100%; 
+            height: 100%; 
+            position: relative; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            overflow: visible;
+        }
+        .map-canvas { 
+            max-width: none; 
+            max-height: none; 
+            cursor: grab;
+            user-select: none;
+            -webkit-user-drag: none;
+            position: absolute;
+        }
+        .map-canvas:active {
+            cursor: grabbing;
+        }
+        .overlay-canvas { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            pointer-events: none; 
+        }
+        
+        /* 缩放控制按钮 */
+        .zoom-controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 50;
+        }
+        .zoom-btn {
+            width: 32px;
+            height: 32px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .zoom-btn:hover {
+            background: #f0f0f0;
+        }
+        
+        /* 地图信息 */
+        .map-info { position: absolute; bottom: 10px; left: 10px; background: rgba(255,255,255,0.9); padding: 6px 12px; border-radius: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- 左侧图表 -->
+        <div class="left-charts">
+            <div class="chart-box">
+                <div class="chart-header">
+                    <div class="chart-title">实时在线率</div>
+                    <div class="chart-cascader" id="chartCascader1">
+                        <div class="chart-cascader-input" id="chartCascaderInput1" onclick="toggleChartCascader(1)">
+                            <span id="chartCascaderValue1">全部区域</span>
+                            <span class="chart-cascader-arrow">▼</span>
+                        </div>
+                        <div class="chart-cascader-dropdown" id="chartCascaderDropdown1">
+                            <div class="chart-cascader-container" id="chartCascaderContainer1"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-content" id="chart1"></div>
+            </div>
+            <div class="chart-box">
+                <div class="chart-header">
+                    <div class="chart-title">7天在线率趋势</div>
+                    <div class="chart-cascader" id="chartCascader2">
+                        <div class="chart-cascader-input" id="chartCascaderInput2" onclick="toggleChartCascader(2)">
+                            <span id="chartCascaderValue2">全部区域</span>
+                            <span class="chart-cascader-arrow">▼</span>
+                        </div>
+                        <div class="chart-cascader-dropdown" id="chartCascaderDropdown2">
+                            <div class="chart-cascader-container" id="chartCascaderContainer2"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-content" id="chart2"></div>
+            </div>
+        </div>
+
+        <!-- 中间地图 -->
+        <div class="center-map">
+            <div class="map-tabs" id="mapTabs"></div>
+            <div class="map-content" id="mapContent">
+                <div class="cascader-panel" id="cascaderPanel">
+                    <div class="cascader-input" id="cascaderInput" onclick="toggleCascader()">
+                        <span id="cascaderValue">全部区域</span>
+                        <span class="cascader-arrow">▼</span>
+                    </div>
+                    <div class="cascader-dropdown" id="cascaderDropdown">
+                        <div class="cascader-container" id="cascaderContainer"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="map-info" id="zoomInfo">缩放: 100%</div>
+            <div class="zoom-controls">
+                <button class="zoom-btn" onclick="zoomIn()" title="放大">+</button>
+                <button class="zoom-btn" onclick="zoomOut()" title="缩小">−</button>
+                <button class="zoom-btn" onclick="resetZoom()" title="重置">⟲</button>
+            </div>
+        </div>
+
+        <!-- 右侧图表 -->
+        <div class="right-charts">
+            <div class="chart-box">
+                <div class="chart-header">
+                    <div class="chart-title">7天用电量</div>
+                    <div class="chart-cascader" id="chartCascader3">
+                        <div class="chart-cascader-input" id="chartCascaderInput3" onclick="toggleChartCascader(3)">
+                            <span id="chartCascaderValue3">全部区域</span>
+                            <span class="chart-cascader-arrow">▼</span>
+                        </div>
+                        <div class="chart-cascader-dropdown" id="chartCascaderDropdown3">
+                            <div class="chart-cascader-container" id="chartCascaderContainer3"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-content" id="chart3"></div>
+            </div>
+            <div class="chart-box">
+                <div class="chart-header">
+                    <div class="chart-title">24小时功率趋势</div>
+                    <div class="chart-cascader" id="chartCascader4">
+                        <div class="chart-cascader-input" id="chartCascaderInput4" onclick="toggleChartCascader(4)">
+                            <span id="chartCascaderValue4">全部区域</span>
+                            <span class="chart-cascader-arrow">▼</span>
+                        </div>
+                        <div class="chart-cascader-dropdown" id="chartCascaderDropdown4">
+                            <div class="chart-cascader-container" id="chartCascaderContainer4"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-content" id="chart4"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const state = {
+            charts: {},
+            currentMapArea: '',
+            mapAreas: [],
+            allAreas: [],
+            areaHierarchy: {},
+            devices: [],
+            zoom: { scale: 1, minScale: 0.5, maxScale: 3, step: 0.2, panX: 0, panY: 0 },
+            pan: { isPanning: false, startX: 0, startY: 0, button: 1 }
+        };
+
+        let chartData = {
+            chart1: { online: 0, offline: 0 },
+            chart2: { dates: [], values: [] },
+            chart3: { dates: [], values: [] },
+            chart4: { times: [], values: [] }
+        };
+
+        function init() {
+            if (window.bridge && window.bridge.jsLog) {
+                const originalLog = console.log;
+                const originalError = console.error;
+                console.log = function(...args) {
+                    window.bridge.jsLog(args.join(' '));
+                    originalLog.apply(console, args);
+                };
+                console.error = function(...args) {
+                    window.bridge.jsError(args.join(' '));
+                    originalError.apply(console, args);
+                };
+            }
+            initCharts();
+            loadChartData();
+            preloadDeviceIcons();
+        }
+
+        function initCharts() {
+            for (let i = 1; i <= 4; i++) {
+                state.charts[i] = echarts.init(document.getElementById(`chart${i}`));
+            }
+        }
+
+        function loadChartData() {
+            loadChart1();
+            loadChart2();
+            loadChart3();
+            loadChart4();
+        }
+
+        function loadChart1() {
+            const data = chartData.chart1;
+            state.charts[1].setOption({
+                tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+                series: [{
+                    type: 'pie', 
+                    radius: ['30%', '50%'], 
+                    center: ['50%', '50%'],
+                    data: [
+                        { value: data.online || 0, name: '在线', itemStyle: { color: '#52c41a' } },
+                        { value: data.offline || 0, name: '离线', itemStyle: { color: '#ff4d4f' } }
+                    ],
+                    label: { 
+                        fontSize: 9, 
+                        formatter: '{b}\n{c}',
+                        position: 'outside',
+                        distanceToLabelLine: 5
+                    },
+                    labelLine: {
+                        length: 10,
+                        length2: 5
+                    }
+                }]
+            });
+        }
+
+        function loadChart2() {
+            let dates = chartData.chart2.dates || [];
+            let values = chartData.chart2.values || [];
+            if (dates.length === 0) {
+                for (let i = 6; i >= 0; i--) {
+                    const d = new Date(); d.setDate(d.getDate() - i);
+                    dates.push(`${d.getMonth() + 1}/${d.getDate()}`); values.push(0);
+                }
+            }
+            state.charts[2].setOption({
+                tooltip: { trigger: 'axis', formatter: '{b}<br/>{c}%' },
+                grid: { left: 35, right: 15, bottom: 35, top: 30, containLabel: true },
+                xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 9 } },
+                yAxis: { type: 'value', max: 100, axisLabel: { fontSize: 9, formatter: '{value}%' } },
+                series: [{
+                    type: 'line', smooth: true, data: values,
+                    areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(24, 144, 255, 0.3)' }, { offset: 1, color: 'rgba(24, 144, 255, 0.05)' }]) },
+                    itemStyle: { color: '#1890ff' }
+                }]
+            });
+        }
+
+        function loadChart3() {
+            let dates = chartData.chart3.dates || [];
+            let values = chartData.chart3.values || [];
+            if (dates.length === 0) {
+                for (let i = 6; i >= 0; i--) {
+                    const d = new Date(); d.setDate(d.getDate() - i);
+                    dates.push(`${d.getMonth() + 1}/${d.getDate()}`); values.push(0);
+                }
+            }
+            state.charts[3].setOption({
+                tooltip: { trigger: 'axis', formatter: '{b}<br/>{c} kWh' },
+                grid: { left: 35, right: 15, bottom: 35, top: 30, containLabel: true },
+                xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 9 } },
+                yAxis: { type: 'value', axisLabel: { fontSize: 9 } },
+                series: [{
+                    type: 'bar', data: values,
+                    itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#52c41a' }, { offset: 1, color: '#389e0d' }]) }
+                }]
+            });
+        }
+
+        function loadChart4() {
+            let times = chartData.chart4.times || [];
+            let values = chartData.chart4.values || [];
+            if (times.length === 0) {
+                const now = new Date();
+                for (let i = 23; i >= 0; i--) {
+                    const d = new Date(now.getTime() - i * 60 * 60 * 1000);
+                    times.push(`${d.getHours().toString().padStart(2, '0')}:00`); values.push(0);
+                }
+            }
+            state.charts[4].setOption({
+                tooltip: { trigger: 'axis', formatter: '{b}<br/>{c} W' },
+                grid: { left: 35, right: 15, bottom: 45, top: 30, containLabel: true },
+                xAxis: { type: 'category', data: times, axisLabel: { fontSize: 8, rotate: 45 } },
+                yAxis: { type: 'value', axisLabel: { fontSize: 9 } },
+                series: [{
+                    type: 'line', smooth: true, data: values,
+                    areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(250, 173, 20, 0.3)' }, { offset: 1, color: 'rgba(250, 173, 20, 0.05)' }]) },
+                    itemStyle: { color: '#faad14' }
+                }]
+            });
+        }
+
+        function updateAreaList(areas) {
+            state.mapAreas = areas;
+            const tabsContainer = document.getElementById('mapTabs');
+            const contentContainer = document.getElementById('mapContent');
+            const filterPanel = document.getElementById('filterPanel');
+            
+            tabsContainer.innerHTML = '';
+            contentContainer.querySelectorAll('.map-page').forEach(p => p.remove());
+            
+            areas.forEach((area, index) => {
+                const name = area.name || area;
+                const imagePath = area.image_path || '';
+                
+                const tab = document.createElement('button');
+                tab.className = 'map-tab' + (index === 0 ? ' active' : '');
+                tab.textContent = name;
+                tab.onclick = () => switchMapArea(name);
+                tabsContainer.appendChild(tab);
+                
+                const page = document.createElement('div');
+                page.className = 'map-page' + (index === 0 ? ' active' : '');
+                page.id = `map-${name}`;
+                
+                const canvasContainer = document.createElement('div');
+                canvasContainer.className = 'canvas-container';
+                
+                if (imagePath) {
+                    const img = document.createElement('img');
+                    img.className = 'map-canvas';
+                    img.id = `img-${name}`;
+                    img.style.display = 'none';
+                    img.onload = function() { onImageLoaded(name); };
+                    img.onerror = function() { onImageError(name); };
+                    canvasContainer.appendChild(img);
+                    setTimeout(() => { img.src = imagePath; img.style.display = 'block'; }, 10);
+                } else {
+                    const noImageDiv = document.createElement('div');
+                    noImageDiv.style.color = '#999';
+                    noImageDiv.textContent = '未绑定图片';
+                    canvasContainer.appendChild(noImageDiv);
+                }
+                
+                const canvas = document.createElement('canvas');
+                canvas.className = 'overlay-canvas';
+                canvas.id = `overlay-${name}`;
+                canvasContainer.appendChild(canvas);
+                
+                page.appendChild(canvasContainer);
+                contentContainer.appendChild(page);
+            });
+            
+            if (filterPanel) contentContainer.appendChild(filterPanel);
+            
+            if (areas.length > 0) {
+                state.currentMapArea = areas[0].name || areas[0];
+                currentMapLevel1Area = state.currentMapArea;
+                state.zoom.scale = 1;
+                state.zoom.panX = 0;
+                state.zoom.panY = 0;
+                setTimeout(() => applyZoom(), 200);
+            }
+        }
+
+        let fullAreaData = [];
+        let chartAreaData = [];
+        let mapAreaData = [];
+        let currentMapLevel1Area = '';
+        
+        // 每个地图标签页独立的筛选状态
+        let mapFilterStates = {};
+        
+        function setSubAreaHierarchy(areas) {
+            try {
+                if (window.bridge && window.bridge.jsLog) {
+                    window.bridge.jsLog(`setSubAreaHierarchy被调用，区域数量: ${areas ? areas.length : 0}`);
+                }
+                chartAreaData = areas;
+                fullAreaData = areas;  // 同时更新fullAreaData，用于路径查找
+                updateChartAreaList(areas);
+            } catch (e) {
+                if (window.bridge && window.bridge.jsError) {
+                    window.bridge.jsError(`setSubAreaHierarchy错误: ${e.message}`);
+                }
+            }
+        }
+        
+        function setMapAreaHierarchy(areas, level1AreaName) {
+            mapAreaData = areas;
+            fullAreaData = areas;
+            currentMapLevel1Area = level1AreaName || state.currentMapArea || '';
+            
+            // 恢复该地图标签页的筛选状态
+            const filterState = mapFilterStates[currentMapLevel1Area];
+            if (filterState) {
+                selectedAreaValue = filterState.selectedAreaValue;
+                selectedAreaPath = filterState.selectedAreaPath;
+            } else {
+                // 初始化为默认状态
+                selectedAreaValue = '__ALL__';
+                selectedAreaPath = '全部区域';
+                mapFilterStates[currentMapLevel1Area] = {
+                    selectedAreaValue: selectedAreaValue,
+                    selectedAreaPath: selectedAreaPath
+                };
+            }
+            
+            state.areaHierarchy = {};
+            state.areaHierarchy[currentMapLevel1Area] = {
+                name: currentMapLevel1Area,
+                level: 1,
+                coords: [],
+                children: {}
+            };
+            
+            areas.forEach(area => {
+                if (area.level === 2) {
+                    state.areaHierarchy[currentMapLevel1Area].children[area.name] = {
+                        name: area.name,
+                        level: 2,
+                        coords: area.coords || [],
+                        children: {}
+                    };
+                    (area.children || []).forEach(level3 => {
+                        state.areaHierarchy[currentMapLevel1Area].children[area.name].children[level3.name] = {
+                            name: level3.name,
+                            level: 3,
+                            coords: level3.coords || []
+                        };
+                    });
+                }
+            });
+            
+            renderCascaderTree();
+        }
+
+        let cascaderOpen = false;
+        let selectedAreaPath = '全部区域';
+        let selectedAreaValue = '__ALL__';
+        
+        function toggleCascader() {
+            cascaderOpen = !cascaderOpen;
+            const input = document.getElementById('cascaderInput');
+            const dropdown = document.getElementById('cascaderDropdown');
+            if (cascaderOpen) {
+                input.classList.add('active');
+                dropdown.classList.add('show');
+                expandAllNodes();
+            } else {
+                input.classList.remove('active');
+                dropdown.classList.remove('show');
+            }
+        }
+        
+        function closeCascader() {
+            cascaderOpen = false;
+            document.getElementById('cascaderInput').classList.remove('active');
+            document.getElementById('cascaderDropdown').classList.remove('show');
+        }
+        
+        function renderCascaderTree() {
+            const container = document.getElementById('cascaderContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            
+            const allItem = document.createElement('div');
+            allItem.className = 'cascader-item level-1' + (selectedAreaValue === '__ALL__' ? ' selected' : '');
+            allItem.innerHTML = '<span style="margin-right:18px;"></span><span>全部区域</span>';
+            allItem.onclick = (e) => onCascaderSelect('__ALL__', '全部区域', e.currentTarget);
+            container.appendChild(allItem);
+            
+            renderTree(fullAreaData, container, 2);
+        }
+        
+        function renderTree(data, parentElement, startLevel) {
+            data.forEach(item => {
+                const level = item.level || startLevel;
+                const hasChildren = item.children && item.children.length > 0;
+                
+                const node = document.createElement('div');
+                // 根据 selectedAreaValue 设置选中状态
+                const isSelected = selectedAreaValue === item.name;
+                node.className = `cascader-item level-${level}` + (isSelected ? ' selected' : '');
+                node.dataset.name = item.name;
+                node.dataset.level = level;
+                node.innerHTML = `${hasChildren ? '<span class="cascader-expand-icon">▶</span>' : '<span style="margin-right:18px;"></span>'}<span>${item.name}</span>`;
+                parentElement.appendChild(node);
+                
+                let childContainer = null;
+                if (hasChildren) {
+                    childContainer = document.createElement('div');
+                    childContainer.className = 'cascader-children';
+                    childContainer.style.display = 'none';
+                    parentElement.appendChild(childContainer);
+                    renderTree(item.children, childContainer, level + 1);
+                }
+                
+                node.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (hasChildren && childContainer) {
+                        const icon = node.querySelector('.cascader-expand-icon');
+                        const isExpanded = childContainer.style.display === 'block';
+                        childContainer.style.display = isExpanded ? 'none' : 'block';
+                        icon.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(90deg)';
+                    }
+                    const fullPath = getNodePath(item, fullAreaData);
+                    onCascaderSelect(item.name, fullPath, node);
+                });
+            });
+        }
+        
+        function getNodePath(target, list) {
+            let pathArr = [];
+            function find(arr) {
+                for (let item of arr) {
+                    if (item.name === target.name && item.level === target.level) {
+                        pathArr.unshift(item.name);
+                        return true;
+                    }
+                    if (item.children && item.children.length) {
+                        if (find(item.children)) {
+                            pathArr.unshift(item.name);
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            find(list);
+            return pathArr.join(' / ');
+        }
+        
+        function expandAllNodes() {
+            document.querySelectorAll('.cascader-expand-icon').forEach(icon => {
+                icon.style.transform = 'rotate(90deg)';
+                const pNode = icon.closest('.cascader-item');
+                const nextEle = pNode.nextElementSibling;
+                if (nextEle && nextEle.classList.contains('cascader-children')) {
+                    nextEle.style.display = 'block';
+                }
+            });
+        }
+        
+        function onCascaderSelect(value, path, element) {
+            selectedAreaValue = value;
+            selectedAreaPath = path;
+            
+            // 保存当前地图标签页的筛选状态
+            if (currentMapLevel1Area) {
+                mapFilterStates[currentMapLevel1Area] = {
+                    selectedAreaValue: selectedAreaValue,
+                    selectedAreaPath: selectedAreaPath
+                };
+            }
+            
+            document.getElementById('cascaderValue').textContent = path;
+            closeCascader();
+            document.querySelectorAll('.cascader-item').forEach(item => item.classList.remove('selected'));
+            if (element) element.classList.add('selected');
+            drawAreas();
+        }
+        
+        document.addEventListener('click', (e) => {
+            const panel = document.getElementById('cascaderPanel');
+            if (panel && !panel.contains(e.target)) closeCascader();
+        });
+
+        let chartCascaderStates = {
+            1: { open: false, selectedValue: '__ALL__', selectedPath: '全部区域' },
+            2: { open: false, selectedValue: '__ALL__', selectedPath: '全部区域' },
+            3: { open: false, selectedValue: '__ALL__', selectedPath: '全部区域' },
+            4: { open: false, selectedValue: '__ALL__', selectedPath: '全部区域' }
+        };
+
+        function toggleChartCascader(chartIndex) {
+            const s = chartCascaderStates[chartIndex];
+            s.open = !s.open;
+            const input = document.getElementById(`chartCascaderInput${chartIndex}`);
+            const dropdown = document.getElementById(`chartCascaderDropdown${chartIndex}`);
+            for (let i = 1; i <= 4; i++) {
+                if (i !== chartIndex) {
+                    chartCascaderStates[i].open = false;
+                    document.getElementById(`chartCascaderInput${i}`)?.classList.remove('active');
+                    document.getElementById(`chartCascaderDropdown${i}`)?.classList.remove('show');
+                }
+            }
+            if (s.open) {
+                input?.classList.add('active');
+                dropdown?.classList.add('show');
+                expandChartCascaderNodes(chartIndex);
+            } else {
+                input?.classList.remove('active');
+                dropdown?.classList.remove('show');
+            }
+        }
+
+        function closeChartCascader(chartIndex) {
+            chartCascaderStates[chartIndex].open = false;
+            document.getElementById(`chartCascaderInput${chartIndex}`)?.classList.remove('active');
+            document.getElementById(`chartCascaderDropdown${chartIndex}`)?.classList.remove('show');
+        }
+
+        function expandChartCascaderNodes(chartIndex) {
+            const container = document.getElementById(`chartCascaderContainer${chartIndex}`);
+            if (!container) return;
+            container.querySelectorAll('.chart-cascader-expand-icon').forEach(icon => {
+                icon.classList.add('open');
+                const pNode = icon.closest('.chart-cascader-item');
+                const nextEle = pNode?.nextElementSibling;
+                if (nextEle && nextEle.classList.contains('chart-cascader-children')) {
+                    nextEle.style.display = 'block';
+                }
+            });
+        }
+
+        function renderChartCascaderTree(chartIndex, areas) {
+            const container = document.getElementById(`chartCascaderContainer${chartIndex}`);
+            if (!container) {
+                if (window.bridge && window.bridge.jsError) window.bridge.jsError(`图表${chartIndex}容器未找到`);
+                return;
+            }
+            container.innerHTML = '';
+            
+            // 调试日志 - 使用bridge发送到Python
+            const debugInfo = `图表${chartIndex}渲染区域树，区域数量: ${areas ? areas.length : 0}`;
+            if (window.bridge && window.bridge.jsLog) window.bridge.jsLog(debugInfo);
+            
+            const s = chartCascaderStates[chartIndex];
+            const allItem = document.createElement('div');
+            allItem.className = 'chart-cascader-item level-1' + (s.selectedValue === '__ALL__' ? ' selected' : '');
+            allItem.innerHTML = '<span style="margin-right:14px;"></span><span>全部区域</span>';
+            allItem.onclick = (e) => { e.stopPropagation(); onChartCascaderSelect(chartIndex, '__ALL__', '全部区域', allItem); };
+            container.appendChild(allItem);
+            
+            // 图表筛选树显示所有区域（所有1级、2级、3级）
+            if (areas && areas.length > 0) {
+                renderChartTreeNodes(areas, container, 1, chartIndex);
+                // 渲染完成后记录子元素数量
+                const childCount = container.children.length;
+                if (window.bridge && window.bridge.jsLog) window.bridge.jsLog(`图表${chartIndex}渲染完成，子元素数量: ${childCount}`);
+            } else {
+                if (window.bridge && window.bridge.jsError) window.bridge.jsError(`图表${chartIndex}区域数据为空`);
+            }
+        }
+
+        function renderChartTreeNodes(data, parentElement, startLevel, chartIndex, parentPath = '') {
+            if (window.bridge && window.bridge.jsLog) window.bridge.jsLog(`渲染节点: 数量=${data.length}, startLevel=${startLevel}, parentPath=${parentPath}`);
+            data.forEach(item => {
+                const level = item.level || startLevel;
+                const hasChildren = item.children && item.children.length > 0;
+                const s = chartCascaderStates[chartIndex];
+                
+                // 构建当前节点的完整路径
+                const currentPath = parentPath ? `${parentPath}/${item.name}` : item.name;
+                
+                if (window.bridge && window.bridge.jsLog) window.bridge.jsLog(`创建节点: name=${item.name}, level=${level}, hasChildren=${hasChildren}, path=${currentPath}`);
+                
+                const node = document.createElement('div');
+                node.className = `chart-cascader-item level-${level}` + (s.selectedValue === item.name ? ' selected' : '');
+                node.dataset.name = item.name;
+                node.dataset.level = level;
+                node.dataset.path = currentPath;  // 存储完整路径
+                node.innerHTML = `${hasChildren ? '<span class="chart-cascader-expand-icon">▶</span>' : '<span style="margin-right:14px;"></span>'}<span>${item.name}</span>`;
+                parentElement.appendChild(node);
+                if (window.bridge && window.bridge.jsLog) window.bridge.jsLog(`节点已添加到DOM: ${item.name}, path=${currentPath}`);
+                
+                let childContainer = null;
+                if (hasChildren) {
+                    childContainer = document.createElement('div');
+                    childContainer.className = 'chart-cascader-children';
+                    childContainer.style.display = 'none';
+                    parentElement.appendChild(childContainer);
+                    renderChartTreeNodes(item.children, childContainer, level + 1, chartIndex, currentPath);
+                }
+                
+                node.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (hasChildren && childContainer) {
+                        const icon = node.querySelector('.chart-cascader-expand-icon');
+                        const isExpanded = childContainer.style.display === 'block';
+                        childContainer.style.display = isExpanded ? 'none' : 'block';
+                        if (isExpanded) icon?.classList.remove('open');
+                        else icon?.classList.add('open');
+                    }
+                    // 使用节点上存储的完整路径，而不是通过getChartNodePath查找
+                    const fullPath = node.dataset.path;
+                    if (window.bridge && window.bridge.jsLog) {
+                        window.bridge.jsLog(`节点点击: name=${item.name}, fullPath=${fullPath}`);
+                    }
+                    onChartCascaderSelect(chartIndex, item.name, fullPath, node);
+                });
+            });
+        }
+
+        function getChartNodePath(target, list) {
+            let pathArr = [];
+            function find(arr) {
+                for (let item of arr) {
+                    if (item.name === target.name && item.level === target.level) {
+                        pathArr.unshift(item.name);
+                        return true;
+                    }
+                    if (item.children && item.children.length) {
+                        if (find(item.children)) {
+                            pathArr.unshift(item.name);
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            const found = find(list);
+            // 使用/作为分隔符，与Python端保持一致
+            const path = pathArr.join('/');
+            if (window.bridge && window.bridge.jsLog) {
+                window.bridge.jsLog(`getChartNodePath: target=${target.name}, found=${found}, path=${path}, listLength=${list.length}`);
+            }
+            return path;
+        }
+
+        function onChartCascaderSelect(chartIndex, value, path, element) {
+            const s = chartCascaderStates[chartIndex];
+            s.selectedValue = value;
+            s.selectedPath = path;
+            // 显示时使用" / "分隔，更美观
+            const displayPath = path === '全部区域' ? path : path.replace(/\//g, ' / ');
+            document.getElementById(`chartCascaderValue${chartIndex}`).textContent = displayPath;
+            closeChartCascader(chartIndex);
+            const container = document.getElementById(`chartCascaderContainer${chartIndex}`);
+            container?.querySelectorAll('.chart-cascader-item').forEach(item => item.classList.remove('selected'));
+            if (element) element.classList.add('selected');
+            // 传递path（完整路径，使用/分隔）而不是value（区域名称），以便正确过滤数据
+            const areaPath = value === '__ALL__' ? 'ALL' : path;
+            onChartFilterChange(chartIndex, areaPath);
+        }
+
+        document.addEventListener('click', (e) => {
+            for (let i = 1; i <= 4; i++) {
+                const cascader = document.getElementById(`chartCascader${i}`);
+                if (cascader && !cascader.contains(e.target)) closeChartCascader(i);
+            }
+        });
+
+        function updateChartAreaList(areas) {
+            try {
+                if (window.bridge && window.bridge.jsLog) {
+                    window.bridge.jsLog(`updateChartAreaList被调用，区域数量: ${areas ? areas.length : 0}`);
+                    if (areas && areas.length > 0) {
+                        areas.forEach((area, idx) => {
+                            window.bridge.jsLog(`  区域${idx}: name=${area.name}, level=${area.level}, children=${area.children ? area.children.length : 0}`);
+                        });
+                    }
+                }
+                state.allAreas = areas;
+                for (let i = 1; i <= 4; i++) renderChartCascaderTree(i, areas);
+            } catch (e) {
+                if (window.bridge && window.bridge.jsError) {
+                    window.bridge.jsError(`updateChartAreaList错误: ${e.message}`);
+                }
+            }
+        }
+
+        function onFilterChange(areaName) {
+            drawAreas();
+        }
+
+        function switchMapArea(areaName) {
+            state.zoom.scale = 1;
+            state.zoom.panX = 0;
+            state.zoom.panY = 0;
+            state.currentMapArea = areaName;
+            currentMapLevel1Area = areaName;
+            
+            // 恢复该地图标签页的筛选状态
+            const filterState = mapFilterStates[areaName];
+            if (filterState) {
+                selectedAreaValue = filterState.selectedAreaValue;
+                selectedAreaPath = filterState.selectedAreaPath;
+            } else {
+                selectedAreaValue = '__ALL__';
+                selectedAreaPath = '全部区域';
+                mapFilterStates[areaName] = {
+                    selectedAreaValue: selectedAreaValue,
+                    selectedAreaPath: selectedAreaPath
+                };
+            }
+            document.getElementById('cascaderValue').textContent = selectedAreaPath;
+            
+            // 重新渲染筛选树以反映当前状态
+            renderCascaderTree();
+            
+            document.querySelectorAll('.map-tab').forEach(tab => tab.classList.toggle('active', tab.textContent === areaName));
+            document.querySelectorAll('.map-page').forEach(page => page.classList.toggle('active', page.id === `map-${areaName}`));
+            if (window.bridge && window.bridge.onMapAreaChanged) window.bridge.onMapAreaChanged(areaName);
+            setTimeout(() => applyZoom(), 300);
+        }
+
+        function onImageLoaded(areaName) {
+            applyZoom();
+        }
+        
+        function onImageError(areaName) {
+            const img = document.getElementById(`img-${areaName}`);
+            if (img && !img.dataset.retry) {
+                img.dataset.retry = 'true';
+                const src = img.src;
+                if (src.includes('file:///')) {
+                    img.src = 'picture/' + src.split('/').pop();
+                }
+            }
+        }
+
+        function drawAreas() {
+            const canvas = document.getElementById(`overlay-${state.currentMapArea}`);
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const img = document.getElementById(`img-${state.currentMapArea}`);
+            if (!img) return;
+            if (!img.complete || img.naturalWidth === 0) {
+                setTimeout(() => drawAreas(), 100);
+                return;
+            }
+            
+            const activeMapPage = document.querySelector('.map-page.active');
+            let containerWidth = activeMapPage ? activeMapPage.getBoundingClientRect().width : 0;
+            let containerHeight = activeMapPage ? activeMapPage.getBoundingClientRect().height : 0;
+            if (containerWidth === 0 || containerHeight === 0) {
+                const mapContent = document.getElementById('mapContent');
+                containerWidth = mapContent ? mapContent.clientWidth : 0;
+                containerHeight = mapContent ? mapContent.clientHeight : 0;
+            }
+            
+            const originalWidth = img.naturalWidth;
+            const originalHeight = img.naturalHeight;
+            const scaleX = containerWidth / originalWidth;
+            const scaleY = containerHeight / originalHeight;
+            const baseScaleFactor = Math.min(scaleX, scaleY);
+            const scaleFactor = baseScaleFactor * state.zoom.scale;
+            const imgDisplayWidth = originalWidth * scaleFactor;
+            const imgDisplayHeight = originalHeight * scaleFactor;
+            const offsetX = (containerWidth - imgDisplayWidth) / 2 + state.zoom.panX;
+            const offsetY = (containerHeight - imgDisplayHeight) / 2 + state.zoom.panY;
+            
+            const canvasWidth = imgDisplayWidth;
+            const canvasHeight = imgDisplayHeight;
+            if (canvas.width !== Math.round(canvasWidth) || canvas.height !== Math.round(canvasHeight)) {
+                canvas.width = Math.round(canvasWidth);
+                canvas.height = Math.round(canvasHeight);
+            }
+            canvas.style.left = `${offsetX}px`;
+            canvas.style.top = `${offsetY}px`;
+            canvas.style.width = '';
+            canvas.style.height = '';
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.dataset.scaleFactor = scaleFactor;
+            canvas.dataset.offsetX = offsetX;
+            canvas.dataset.offsetY = offsetY;
+            ctx.save();
+            
+            const selectedFilter = selectedAreaPath === '全部区域' ? '__ALL__' : selectedAreaPath.split(' / ').pop();
+            const hierarchyKey = currentMapLevel1Area || state.currentMapArea;
+            const hierarchy = state.areaHierarchy[hierarchyKey];
+            if (hierarchy && hierarchy.children) {
+                Object.values(hierarchy.children).forEach(level2 => {
+                    const isSelected = selectedFilter === level2.name || selectedFilter === '__ALL__';
+                    if (level2.coords && level2.coords.length > 0) {
+                        drawPolygon(ctx, level2.coords, isSelected, scaleFactor, 0, 0);
+                    }
+                    if (level2.children) {
+                        Object.values(level2.children).forEach(level3 => {
+                            const isLevel3Selected = selectedFilter === level3.name;
+                            if (level3.coords && level3.coords.length > 0) {
+                                drawPolygon(ctx, level3.coords, isLevel3Selected || isSelected, scaleFactor, 0, 0);
+                            }
+                        });
+                    }
+                });
+            }
+            
+            state.devices.forEach(device => {
+                if (device.parent_area === state.currentMapArea) {
+                    const isInFilteredArea = isDeviceInFilteredArea(device, selectedFilter);
+                    if (isInFilteredArea && device.x !== undefined && device.y !== undefined) {
+                        drawDeviceIcon(ctx, device, scaleFactor, 0, 0);
+                    }
+                }
+            });
+            
+            ctx.restore();
+        }
+
+        function isDeviceInFilteredArea(device, selectedFilter) {
+            if (selectedFilter === '__ALL__') return true;
+            const deviceArea2 = device.area || '';
+            const deviceArea3 = device.sub_area || '';
+            
+            if (window.bridge && window.bridge.jsLog) {
+                window.bridge.jsLog(`isDeviceInFilteredArea: device=${device.id}, area2=${deviceArea2}, area3=${deviceArea3}, selectedFilter=${selectedFilter}`);
+            }
+            
+            // 只使用区域字段匹配，不依赖坐标位置
+            if (deviceArea2 === selectedFilter || deviceArea3 === selectedFilter) {
+                if (window.bridge && window.bridge.jsLog) {
+                    window.bridge.jsLog(`  -> 匹配成功(区域名称)`);
+                }
+                return true;
+            }
+            
+            if (window.bridge && window.bridge.jsLog) {
+                window.bridge.jsLog(`  -> 不匹配`);
+            }
+            return false;
+        }
+
+        function isPointInPolygon(point, polygon) {
+            if (!polygon || polygon.length < 3) return false;
+            const x = point[0], y = point[1];
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                const xi = polygon[i][0], yi = polygon[i][1];
+                const xj = polygon[j][0], yj = polygon[j][1];
+                const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        function drawPolygon(ctx, coords, isHighlighted, scaleFactor, offsetX, offsetY) {
+            if (!coords || coords.length < 3) return;
+            scaleFactor = scaleFactor || 1;
+            offsetX = offsetX || 0;
+            offsetY = offsetY || 0;
+            ctx.beginPath();
+            ctx.moveTo(coords[0][0] * scaleFactor + offsetX, coords[0][1] * scaleFactor + offsetY);
+            for (let i = 1; i < coords.length; i++) {
+                ctx.lineTo(coords[i][0] * scaleFactor + offsetX, coords[i][1] * scaleFactor + offsetY);
+            }
+            ctx.closePath();
+            ctx.fillStyle = isHighlighted ? 'rgba(24, 144, 255, 0.3)' : 'rgba(200, 200, 200, 0.1)';
+            ctx.fill();
+            ctx.strokeStyle = isHighlighted ? '#1890ff' : '#ccc';
+            ctx.lineWidth = isHighlighted ? 2 : 1;
+            ctx.stroke();
+        }
+
+        const deviceIconCache = {};
+        
+        function preloadDeviceIcons() {
+            const iconPaths = ['picture/icon/离线.png', 'picture/icon/告警.png', 'picture/icon/开灯.png', 'picture/icon/关灯.png'];
+            iconPaths.forEach(path => {
+                if (!deviceIconCache[path]) {
+                    const img = new Image();
+                    img.onload = function() { deviceIconCache[path] = img; };
+                    img.onerror = function() { deviceIconCache[path] = null; };
+                    img.src = path;
+                }
+            });
+        }
+        
+        function drawDeviceIcon(ctx, device, scaleFactor, offsetX, offsetY) {
+            scaleFactor = scaleFactor || 1;
+            offsetX = offsetX || 0;
+            offsetY = offsetY || 0;
+            const x = device.x * scaleFactor + offsetX;
+            const y = device.y * scaleFactor + offsetY;
+            
+            let iconPath = '';
+            if (!device.is_online) iconPath = 'picture/icon/离线.png';
+            else if (device.is_alarm) iconPath = 'picture/icon/告警.png';
+            else if (device.is_on) iconPath = 'picture/icon/开灯.png';
+            else iconPath = 'picture/icon/关灯.png';
+            
+            const cachedImg = deviceIconCache[iconPath];
+            if (cachedImg) {
+                ctx.drawImage(cachedImg, x - 12, y - 12, 24, 24);
+                ctx.fillStyle = '#333';
+                ctx.font = '12px Microsoft YaHei';
+                ctx.fillText(device.name || device.id, x + 15, y + 4);
+            } else {
+                ctx.beginPath();
+                ctx.arc(x, y, 8, 0, Math.PI * 2);
+                ctx.fillStyle = device.is_online ? '#52c41a' : '#ff4d4f';
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.fillStyle = '#333';
+                ctx.font = '12px Microsoft YaHei';
+                ctx.fillText(device.name || device.id, x + 12, y + 4);
+                
+                if (cachedImg !== null) {
+                    const iconImg = new Image();
+                    iconImg.onload = function() {
+                        deviceIconCache[iconPath] = iconImg;
+                        drawAreas();
+                    };
+                    iconImg.onerror = function() { deviceIconCache[iconPath] = null; };
+                    iconImg.src = iconPath;
+                }
+            }
+        }
+
+        function onChartFilterChange(chartIndex, areaValue) {
+            // chartIndex从1开始(1-4)，转换为0开始(0-3)以匹配Python端的映射
+            const pythonChartIndex = chartIndex - 1;
+            if (window.bridge && window.bridge.jsLog) {
+                window.bridge.jsLog(`onChartFilterChange: chartIndex=${chartIndex}, pythonChartIndex=${pythonChartIndex}, areaValue=${areaValue}`);
+            }
+            if (window.bridge) window.bridge.onChartFilterChanged(pythonChartIndex, areaValue);
+        }
+
+        function updateChartData(data) {
+            if (data.chart1) chartData.chart1 = data.chart1;
+            if (data.chart2) chartData.chart2 = data.chart2;
+            if (data.chart3) chartData.chart3 = data.chart3;
+            if (data.chart4) chartData.chart4 = data.chart4;
+            loadChartData();
+        }
+
+        function updateDevices(devices) {
+            state.devices = devices;
+            drawAreas();
+        }
+
+        function zoomIn() {
+            if (state.zoom.scale < state.zoom.maxScale) {
+                state.zoom.scale = Math.min(state.zoom.scale + state.zoom.step, state.zoom.maxScale);
+                applyZoom();
+            }
+        }
+        
+        function zoomOut() {
+            if (state.zoom.scale > state.zoom.minScale) {
+                state.zoom.scale = Math.max(state.zoom.scale - state.zoom.step, state.zoom.minScale);
+                applyZoom();
+            }
+        }
+        
+        function resetZoom() {
+            state.zoom.scale = 1;
+            state.zoom.panX = 0;
+            state.zoom.panY = 0;
+            applyZoom();
+        }
+        
+        function applyZoom() {
+            const currentArea = state.currentMapArea;
+            if (!currentArea) return;
+            const img = document.getElementById(`img-${currentArea}`);
+            const canvas = document.getElementById(`overlay-${currentArea}`);
+            if (!img || !canvas) return;
+
+            const activeMapPage = document.querySelector('.map-page.active');
+            let containerWidth = activeMapPage ? activeMapPage.getBoundingClientRect().width : 0;
+            let containerHeight = activeMapPage ? activeMapPage.getBoundingClientRect().height : 0;
+            if (containerWidth === 0 || containerHeight === 0) {
+                const mapContent = document.getElementById('mapContent');
+                containerWidth = mapContent ? mapContent.clientWidth : 0;
+                containerHeight = mapContent ? mapContent.clientHeight : 0;
+            }
+            if (containerWidth === 0 || containerHeight === 0) {
+                setTimeout(() => applyZoom(), 100);
+                return;
+            }
+            if (!img.complete || img.naturalWidth === 0) {
+                setTimeout(() => applyZoom(), 300);
+                return;
+            }
+
+            const originalWidth = img.naturalWidth;
+            const originalHeight = img.naturalHeight;
+            const scaleX = containerWidth / originalWidth;
+            const scaleY = containerHeight / originalHeight;
+            const baseScaleFactor = Math.min(scaleX, scaleY);
+            const scaleFactor = baseScaleFactor * state.zoom.scale;
+            const imgDisplayWidth = originalWidth * scaleFactor;
+            const imgDisplayHeight = originalHeight * scaleFactor;
+            const left = (containerWidth - imgDisplayWidth) / 2 + state.zoom.panX;
+            const top = (containerHeight - imgDisplayHeight) / 2 + state.zoom.panY;
+
+            img.style.width = `${imgDisplayWidth}px`;
+            img.style.height = `${imgDisplayHeight}px`;
+            img.style.position = 'absolute';
+            img.style.left = `${left}px`;
+            img.style.top = `${top}px`;
+            img.style.transform = 'none';
+            img.style.maxWidth = 'none';
+            img.style.maxHeight = 'none';
+            img.style.display = 'block';
+            img.style.visibility = 'visible';
+            img.style.opacity = '1';
+
+            const zoomInfo = document.getElementById('zoomInfo');
+            if (zoomInfo) zoomInfo.textContent = `缩放: ${Math.round(state.zoom.scale * 100)}%`;
+            drawAreas();
+        }
+        
+        function initZoomListeners() {
+            const mapContent = document.getElementById('mapContent');
+            if (!mapContent) return;
+            
+            mapContent.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                if (e.deltaY < 0) zoomIn();
+                else zoomOut();
+            }, { passive: false });
+            
+            mapContent.addEventListener('contextmenu', function(e) { e.preventDefault(); return false; });
+            
+            mapContent.addEventListener('mousedown', function(e) {
+                if (e.button === state.pan.button) {
+                    e.preventDefault();
+                    state.pan.isPanning = true;
+                    state.pan.startX = e.clientX - state.zoom.panX;
+                    state.pan.startY = e.clientY - state.zoom.panY;
+                    mapContent.style.cursor = 'move';
+                }
+            });
+            
+            mapContent.addEventListener('mousemove', function(e) {
+                if (state.pan.isPanning) {
+                    e.preventDefault();
+                    state.zoom.panX = e.clientX - state.pan.startX;
+                    state.zoom.panY = e.clientY - state.pan.startY;
+                    applyZoom();
+                }
+            });
+            
+            mapContent.addEventListener('mouseup', function(e) {
+                if (e.button === state.pan.button) {
+                    state.pan.isPanning = false;
+                    mapContent.style.cursor = 'default';
+                }
+            });
+            
+            mapContent.addEventListener('mouseleave', function() {
+                state.pan.isPanning = false;
+                mapContent.style.cursor = 'default';
+            });
+        }
+
+        window.addEventListener('resize', () => {
+            Object.values(state.charts).forEach(chart => chart.resize());
+            // 窗口大小变化时，重新应用缩放以确保地图和绘制区域匹配
+            applyZoom();
+        });
+
+        const originalInit = init;
+        init = function() {
+            originalInit();
+            initZoomListeners();
+        };
+
+        if (typeof qt !== 'undefined') {
+            new QWebChannel(qt.webChannelTransport, function(channel) {
+                window.bridge = channel.objects.bridge;
+                init();
+            });
+        } else {
+            window.onload = init;
+        }
+    </script>
+</body>
+</html>

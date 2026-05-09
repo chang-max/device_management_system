@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据图表展示</title>
+    <!-- ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <!-- PyQt WebChannel -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background-color: #f5f5f5;
+            padding: 10px;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 10px;
+            height: 100vh;
+        }
+
+        .chart-panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .chart-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .area-filter {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .area-filter select {
+            padding: 4px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            min-width: 120px;
+        }
+
+        .area-filter button {
+            padding: 4px 12px;
+            background: #1890ff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .area-filter button:hover {
+            background: #40a9ff;
+        }
+
+        .chart-container {
+            flex: 1;
+            min-height: 0;
+        }
+
+        /* 响应式布局 */
+        @media (max-width: 1200px) {
+            .container {
+                grid-template-columns: 1fr;
+                grid-template-rows: repeat(4, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 实时在线率饼图 -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <span class="chart-title">实时在线率</span>
+                <div class="area-filter">
+                    <select id="realtimePieAreaSelect">
+                        <option value="">全部区域</option>
+                    </select>
+                    <button onclick="confirmArea('realtime_pie')">确认</button>
+                </div>
+            </div>
+            <div class="chart-container" id="realtimePieChart"></div>
+        </div>
+
+        <!-- 7天在线率折线图 -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <span class="chart-title">7天在线率趋势</span>
+                <div class="area-filter">
+                    <select id="online7dAreaSelect">
+                        <option value="">全部区域</option>
+                    </select>
+                    <button onclick="confirmArea('online_7d')">确认</button>
+                </div>
+            </div>
+            <div class="chart-container" id="online7dChart"></div>
+        </div>
+
+        <!-- 7天用电量折线图 -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <span class="chart-title">7天用电量趋势</span>
+                <div class="area-filter">
+                    <select id="electricity7dAreaSelect">
+                        <option value="">全部区域</option>
+                    </select>
+                    <button onclick="confirmArea('electricity_7d')">确认</button>
+                </div>
+            </div>
+            <div class="chart-container" id="electricity7dChart"></div>
+        </div>
+
+        <!-- 24小时功率折线图 -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <span class="chart-title">24小时功率趋势</span>
+                <div class="area-filter">
+                    <select id="power24hAreaSelect">
+                        <option value="">全部区域</option>
+                    </select>
+                    <button onclick="confirmArea('power_24h')">确认</button>
+                </div>
+            </div>
+            <div class="chart-container" id="power24hChart"></div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== 配置 ====================
+        const CONFIG = {
+            colors: ['#52c41a', '#ff4d4f', '#1890ff', '#faad14', '#722ed1'],
+            refreshInterval: 30000  // 30秒刷新一次
+        };
+
+        // ==================== 状态管理 ====================
+        const state = {
+            areaList: [],
+            charts: {}
+        };
+
+        // ==================== 初始化 ====================
+        function init() {
+            // 初始化图表
+            initCharts();
+            
+            // 加载区域数据
+            loadAreaList();
+            
+            // 加载图表数据
+            loadChartData();
+            
+            // 启动自动刷新
+            setInterval(loadChartData, CONFIG.refreshInterval);
+            
+            // 窗口大小改变时重新调整图表
+            window.addEventListener('resize', () => {
+                Object.values(state.charts).forEach(chart => chart.resize());
+            });
+        }
+
+        // ==================== 初始化图表 ====================
+        function initCharts() {
+            // 实时在线率饼图
+            state.charts.realtimePie = echarts.init(document.getElementById('realtimePieChart'));
+            
+            // 7天在线率折线图
+            state.charts.online7d = echarts.init(document.getElementById('online7dChart'));
+            
+            // 7天用电量折线图
+            state.charts.electricity7d = echarts.init(document.getElementById('electricity7dChart'));
+            
+            // 24小时功率折线图
+            state.charts.power24h = echarts.init(document.getElementById('power24hChart'));
+        }
+
+        // ==================== 加载区域列表 ====================
+        function loadAreaList() {
+            // 从URL参数或API获取区域列表
+            const urlParams = new URLSearchParams(window.location.search);
+            const areasParam = urlParams.get('areas');
+            
+            if (areasParam) {
+                try {
+                    state.areaList = JSON.parse(decodeURIComponent(areasParam));
+                    updateAreaSelects();
+                } catch (e) {
+                    console.error('解析区域列表失败:', e);
+                }
+            } else {
+                // 从API获取
+                fetch('/api/area_list')
+                    .then(res => res.json())
+                    .then(data => {
+                        state.areaList = data.areas || [];
+                        updateAreaSelects();
+                    })
+                    .catch(err => {
+                        console.error('加载区域列表失败:', err);
+                        // 使用模拟数据
+                        loadMockAreas();
+                    });
+            }
+        }
+
+        function loadMockAreas() {
+            state.areaList = [
+                { name: '锅炉房', children: [{ name: '区域A' }, { name: '区域B' }] },
+                { name: '车间', children: [{ name: '车间1' }, { name: '车间2' }] }
+            ];
+            updateAreaSelects();
+        }
+
+        function updateAreaSelects() {
+            const selects = [
+                document.getElementById('realtimePieAreaSelect'),
+                document.getElementById('online7dAreaSelect'),
+                document.getElementById('electricity7dAreaSelect'),
+                document.getElementById('power24hAreaSelect')
+            ];
+            
+            selects.forEach(select => {
+                if (!select) return;
+                
+                // 保留第一个选项（全部区域）
+                const firstOption = select.options[0];
+                select.innerHTML = '';
+                select.appendChild(firstOption);
+                
+                // 添加区域选项
+                function addAreaOptions(areas, prefix = '') {
+                    areas.forEach(area => {
+                        const option = document.createElement('option');
+                        option.value = area.name;
+                        option.textContent = prefix + area.name;
+                        select.appendChild(option);
+                        
+                        if (area.children && area.children.length > 0) {
+                            addAreaOptions(area.children, prefix + '  ');
+                        }
+                    });
+                }
+                
+                addAreaOptions(state.areaList);
+            });
+        }
+
+        // ==================== 加载图表数据 ====================
+        function loadChartData() {
+            // 实时在线率数据
+            loadRealtimePieData();
+            
+            // 7天在线率数据
+            loadOnline7dData();
+            
+            // 7天用电量数据
+            loadElectricity7dData();
+            
+            // 24小时功率数据
+            loadPower24hData();
+        }
+
+        function loadRealtimePieData(areaPath = '') {
+            // 从API获取数据
+            const url = areaPath 
+                ? `/api/realtime_online_rate?area=${encodeURIComponent(areaPath)}`
+                : '/api/realtime_online_rate';
+            
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    updateRealtimePieChart(data);
+                })
+                .catch(err => {
+                    console.error('加载实时在线率数据失败:', err);
+                    // 使用模拟数据
+                    updateRealtimePieChart({
+                        online: 85,
+                        offline: 15
+                    });
+                });
+        }
+
+        function updateRealtimePieChart(data) {
+            const option = {
+                tooltip: {
+                    trigger: 'item',
+                    formatter: '{b}: {c} ({d}%)'
+                },
+                legend: {
+                    orient: 'vertical',
+                    left: 'left',
+                    top: 'center'
+                },
+                series: [{
+                    type: 'pie',
+                    radius: ['40%', '70%'],
+                    avoidLabelOverlap: false,
+                    itemStyle: {
+                        borderRadius: 10,
+                        borderColor: '#fff',
+                        borderWidth: 2
+                    },
+                    label: {
+                        show: true,
+                        formatter: '{b}\n{c} ({d}%)'
+                    },
+                    data: [
+                        { 
+                            value: data.online || 0, 
+                            name: '在线',
+                            itemStyle: { color: '#52c41a' }
+                        },
+                        { 
+                            value: data.offline || 0, 
+                            name: '离线',
+                            itemStyle: { color: '#ff4d4f' }
+                        }
+                    ]
+                }]
+            };
+            
+            state.charts.realtimePie.setOption(option);
+        }
+
+        function loadOnline7dData(areaPath = '') {
+            const url = areaPath 
+                ? `/api/online_rate_7d?area=${encodeURIComponent(areaPath)}`
+                : '/api/online_rate_7d';
+            
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    updateOnline7dChart(data);
+                })
+                .catch(err => {
+                    console.error('加载7天在线率数据失败:', err);
+                    // 使用模拟数据
+                    const dates = [];
+                    const rates = [];
+                    for (let i = 6; i >= 0; i--) {
+                        const d = new Date();
+                        d.setDate(d.getDate() - i);
+                        dates.push(`${d.getMonth() + 1}/${d.getDate()}`);
+                        rates.push(Math.round(80 + Math.random() * 20));
+                    }
+                    updateOnline7dChart({ dates, rates });
+                });
+        }
+
+        function updateOnline7dChart(data) {
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: '{b}<br/>在线率: {c}%'
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: data.dates || []
+                },
+                yAxis: {
+                    type: 'value',
+                    min: 0,
+                    max: 100,
+                    axisLabel: {
+                        formatter: '{value}%'
+                    }
+                },
+                series: [{
+                    name: '在线率',
+                    type: 'line',
+                    smooth: true,
+                    data: data.rates || [],
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: 'rgba(24, 144, 255, 0.3)' },
+                            { offset: 1, color: 'rgba(24, 144, 255, 0.05)' }
+                        ])
+                    },
+                    itemStyle: {
+                        color: '#1890ff'
+                    }
+                }]
+            };
+            
+            state.charts.online7d.setOption(option);
+        }
+
+        function loadElectricity7dData(areaPath = '') {
+            const url = areaPath 
+                ? `/api/electricity_7d?area=${encodeURIComponent(areaPath)}`
+                : '/api/electricity_7d';
+            
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    updateElectricity7dChart(data);
+                })
+                .catch(err => {
+                    console.error('加载7天用电量数据失败:', err);
+                    // 使用模拟数据
+                    const dates = [];
+                    const values = [];
+                    for (let i = 6; i >= 0; i--) {
+                        const d = new Date();
+                        d.setDate(d.getDate() - i);
+                        dates.push(`${d.getMonth() + 1}/${d.getDate()}`);
+                        values.push(Math.round(100 + Math.random() * 200));
+                    }
+                    updateElectricity7dChart({ dates, values });
+                });
+        }
+
+        function updateElectricity7dChart(data) {
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: '{b}<br/>用电量: {c} kWh'
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    data: data.dates || []
+                },
+                yAxis: {
+                    type: 'value',
+                    name: 'kWh'
+                },
+                series: [{
+                    name: '用电量',
+                    type: 'bar',
+                    data: data.values || [],
+                    itemStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: '#52c41a' },
+                            { offset: 1, color: '#389e0d' }
+                        ])
+                    }
+                }]
+            };
+            
+            state.charts.electricity7d.setOption(option);
+        }
+
+        function loadPower24hData(areaPath = '') {
+            const url = areaPath 
+                ? `/api/power_24h?area=${encodeURIComponent(areaPath)}`
+                : '/api/power_24h';
+            
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    updatePower24hChart(data);
+                })
+                .catch(err => {
+                    console.error('加载24小时功率数据失败:', err);
+                    // 使用模拟数据
+                    const times = [];
+                    const values = [];
+                    const now = new Date();
+                    for (let i = 23; i >= 0; i--) {
+                        const d = new Date(now.getTime() - i * 60 * 60 * 1000);
+                        times.push(`${d.getHours().toString().padStart(2, '0')}:00`);
+                        values.push(Math.round(50 + Math.random() * 100));
+                    }
+                    updatePower24hChart({ times, values });
+                });
+        }
+
+        function updatePower24hChart(data) {
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: '{b}<br/>功率: {c} W'
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: data.times || []
+                },
+                yAxis: {
+                    type: 'value',
+                    name: 'W'
+                },
+                series: [{
+                    name: '功率',
+                    type: 'line',
+                    smooth: true,
+                    data: data.values || [],
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: 'rgba(250, 173, 20, 0.3)' },
+                            { offset: 1, color: 'rgba(250, 173, 20, 0.05)' }
+                        ])
+                    },
+                    itemStyle: {
+                        color: '#faad14'
+                    }
+                }]
+            };
+            
+            state.charts.power24h.setOption(option);
+        }
+
+        // ==================== 区域筛选确认 ====================
+        function confirmArea(chartName) {
+            let selectId;
+            switch(chartName) {
+                case 'realtime_pie':
+                    selectId = 'realtimePieAreaSelect';
+                    break;
+                case 'online_7d':
+                    selectId = 'online7dAreaSelect';
+                    break;
+                case 'electricity_7d':
+                    selectId = 'electricity7dAreaSelect';
+                    break;
+                case 'power_24h':
+                    selectId = 'power24hAreaSelect';
+                    break;
+            }
+            
+            const select = document.getElementById(selectId);
+            const selectedArea = select ? select.value : '';
+            
+            // 发送给PyQt
+            if (bridge && bridge.onChartAreaConfirmed) {
+                bridge.onChartAreaConfirmed(chartName, selectedArea);
+            }
+            
+            // 刷新对应图表
+            switch(chartName) {
+                case 'realtime_pie':
+                    loadRealtimePieData(selectedArea);
+                    break;
+                case 'online_7d':
+                    loadOnline7dData(selectedArea);
+                    break;
+                case 'electricity_7d':
+                    loadElectricity7dData(selectedArea);
+                    break;
+                case 'power_24h':
+                    loadPower24hData(selectedArea);
+                    break;
+            }
+        }
+
+        // ==================== PyQt WebChannel ====================
+        let bridge = null;
+        
+        if (typeof qt !== 'undefined') {
+            new QWebChannel(qt.webChannelTransport, function(channel) {
+                bridge = channel.objects.bridge;
+                console.log('WebChannel connected');
+            });
+        }
+
+        // ==================== 外部调用接口 ====================
+        // 供PyQt调用的更新数据函数
+        function updateChartData(chartName, data) {
+            switch(chartName) {
+                case 'realtime_pie':
+                    updateRealtimePieChart(data);
+                    break;
+                case 'online_7d':
+                    updateOnline7dChart(data);
+                    break;
+                case 'electricity_7d':
+                    updateElectricity7dChart(data);
+                    break;
+                case 'power_24h':
+                    updatePower24hChart(data);
+                    break;
+            }
+        }
+
+        function updateAreaList(areas) {
+            state.areaList = areas;
+            updateAreaSelects();
+        }
+
+        // ==================== 启动 ====================
+        window.onload = init;
+    </script>
+</body>
+</html>

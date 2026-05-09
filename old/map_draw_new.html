@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>区域划设</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* 防止闪烁和优化渲染性能 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+        }
+        body, html { width: 100%; height: 100%; font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif; }
+        .dialog-wrapper { width: 100%; height: 100%; display: flex; flex-direction: column; background: #fff; }
+        .dialog-header { padding: 15px 20px; border-bottom: 1px solid #dcdfe6; display: flex; justify-content: space-between; align-items: center; }
+        .dialog-title { font-size: 18px; font-weight: 500; color: #303133; }
+        .dialog-close { background: none; border: none; font-size: 24px; color: #909399; cursor: pointer; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+        .dialog-close:hover { color: #409eff; }
+        .dialog-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .search-bar { padding: 15px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #ebeef5; }
+        .search-bar span { color: #606266; font-size: 14px; }
+        .search-input { flex: 1; max-width: 300px; }
+        .search-input input { width: 100%; height: 36px; padding: 0 15px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; outline: none; }
+        .search-input input:focus { border-color: #409eff; }
+        .btn { padding: 8px 16px; border: 1px solid #dcdfe6; background: #fff; border-radius: 4px; cursor: pointer; font-size: 14px; color: #606266; transition: all 0.2s; }
+        .btn:hover { color: #409eff; border-color: #c6e2ff; background: #ecf5ff; }
+        .btn-primary { background: #409eff; border-color: #409eff; color: #fff; }
+        .btn-primary:hover { background: #66b1ff; border-color: #66b1ff; }
+        .btn-success { background: #67c23a; border-color: #67c23a; color: #fff; }
+        .btn-success:hover { background: #85ce61; border-color: #85ce61; }
+        .btn-warning { background: #e6a23c; border-color: #e6a23c; color: #fff; }
+        .btn-warning:hover { background: #ebb563; border-color: #ebb563; }
+        .btn:disabled { background: #f5f7fa; border-color: #e4e7ed; color: #c0c4cc; cursor: not-allowed; }
+        .map-container { flex: 1; position: relative; background: #f4f4f4; }
+        #container { width: 100%; height: 100%; }
+        .tips { color: #909399; font-size: 12px; margin-left: 10px; }
+        .type-card { position: absolute; top: 20px; left: 20px; background: #fff; border-radius: 4px; box-shadow: 0 2px 12px 0 rgba(0,0,0,0.1); display: flex; padding: 10px; gap: 10px; z-index: 1000; will-change: transform; transform: translateZ(0); -webkit-transform: translateZ(0); }
+        .type-card-item { display: flex; flex-direction: column; align-items: center; padding: 10px 20px; cursor: pointer; border-radius: 4px; /* transition: all 0.2s; */ min-width: 80px; will-change: transform; transform: translateZ(0); -webkit-transform: translateZ(0); }
+        .type-card-item:hover { background: #f5f7fa; }
+        .type-card-item.active { background: #ecf5ff; color: #409eff; }
+        .type-card-item.disabled { opacity: 0.5; cursor: not-allowed; background: #f5f7fa; }
+        .type-card-item .icon { width: 24px; height: 24px; margin-bottom: 5px; display: flex; align-items: center; justify-content: center; }
+        .type-card-item span { font-size: 12px; }
+        .edit-btn { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%) translateZ(0); background: #fff; border-radius: 4px; box-shadow: 0 2px 12px 0 rgba(0,0,0,0.1); padding: 10px; display: flex; gap: 10px; z-index: 1000; will-change: transform; }
+    </style>
+    <script>
+        // 高德地图安全密钥配置 - 必须在加载地图JS之前设置
+        window._AMapSecurityConfig = {
+            securityJsCode: '{{MAP_SECURITY_KEY}}'
+        };
+    </script>
+    <script>
+        // 禁用高德地图的动画效果以提升性能
+        window.AMapConfig = {
+            // 禁用硬件加速检测，强制使用软件渲染（在PyQt中更稳定）
+            forceSoftwareRendering: false,
+            // 减少帧率
+            frameRate: 30
+        };
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key={{MAP_KEY}}"></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+    <div class="dialog-wrapper">
+        <div class="dialog-header">
+            <span class="dialog-title">区域划设</span>
+        </div>
+        <div class="dialog-body">
+            <div class="search-bar">
+                <span>搜索地址:</span>
+                <div class="search-input">
+                    <input type="text" id="addressInput" placeholder="请输入地址">
+                </div>
+                <button class="btn" onclick="searchAddress()">查找</button>
+                <span class="tips">注：通过左键点击来进行绘制，右键点击结束</span>
+            </div>
+            <div class="map-container">
+                <div id="container"></div>
+                <div class="type-card">
+                    <div class="type-card-item" data-type="polygon" onclick="selectTool('polygon')" id="btn-polygon">
+                        <div class="icon">⬟</div>
+                        <span>多边形</span>
+                    </div>
+                </div>
+                <div class="edit-btn">
+                    <button class="btn btn-warning" id="editBtn" onclick="startEdit()" disabled>编辑</button>
+                    <button class="btn btn-primary" id="closeEditBtn" onclick="closeEdit()" disabled>结束编辑</button>
+                    <button class="btn btn-success" onclick="saveShape()">保存</button>
+                    <button class="btn" onclick="clearShape()">清除</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var map = null;
+        var mouseTool = null;
+        var currentShape = null;
+        var isDrawing = false;
+        var isEditing = false;
+        var currentTool = null;
+        var drawCallback = null;
+        var shapeEditor = null;
+        var hasDrawnShape = false;
+        var mapReady = false;
+        var pendingExistingArea = null;
+
+        function initMap() {
+            try {
+                map = new AMap.Map('container', {
+                    zoom: 10,
+                    center: [116.397428, 39.90923],
+                    viewMode: '2D',
+                    // 性能优化配置
+                    animateEnable: false,
+                    keyboardEnable: false,
+                    doubleClickZoom: false,
+                    scrollWheel: true,
+                    touchZoom: false,
+                    dragEnable: true,
+                    zooms: [3, 20],
+                    mapStyle: 'amap://styles/normal',
+                    rotateEnable: false,
+                    pitchEnable: false,
+                    defaultCursor: 'default',
+                    // 性能优化：减少地图细节
+                    features: ['bg', 'road', 'building', 'point'],
+                    // 禁用3D建筑
+                    showBuildingBlock: false
+                });
+
+                map.on('complete', function() {
+                    mapReady = true;
+                    console.log('地图加载完成');
+                    // 初始状态启用工具按钮，让用户可以选择工具
+                    enableToolButtons();
+
+                    if (pendingExistingArea) {
+                        var cachedArea = pendingExistingArea;
+                        pendingExistingArea = null;
+                        loadExistingArea(cachedArea.coords, cachedArea.type);
+                    }
+                    
+                    // 阻止双击事件，防止双击结束绘制
+                    map.on('dblclick', function(e) {
+                        console.log('双击事件被阻止');
+                        e.stopPropagation();
+                        return false;
+                    });
+                    
+                    AMap.plugin(['AMap.MouseTool'], function() {
+                        mouseTool = new AMap.MouseTool(map);
+                        
+                        mouseTool.on('draw', function(e) {
+                            console.log('绘制完成:', e.obj.CLASS_NAME);
+                            currentShape = e.obj;
+                            isDrawing = false;
+                            hasDrawnShape = true;
+                            clearToolSelection();
+                            disableToolButtons();
+                            document.getElementById('editBtn').disabled = false;
+                            console.log('绘制完成，已标记hasDrawnShape=true, currentShape:', currentShape);
+                        });
+                        
+                        console.log('MouseTool 加载完成');
+                    });
+                    
+                    map.on('rightclick', function(e) {
+                        // 只要有mouseTool，右键就结束绘制（不管isDrawing状态）
+                        if (mouseTool) {
+                            console.log('右键点击，结束绘制');
+                            
+                            // 对于多边形/折线/矩形，需要手动获取当前绘制的图形
+                            if (isDrawing && !currentShape) {
+                                // 获取地图上所有覆盖物，找到正在绘制的图形
+                                var overlays = map.getAllOverlays();
+                                console.log('查找图形，当前覆盖物数量:', overlays.length);
+                                for (var i = overlays.length - 1; i >= 0; i--) {
+                                    var overlay = overlays[i];
+                                    var className = overlay.CLASS_NAME;
+                                    console.log('检查覆盖物:', className);
+                                    if (className === 'AMap.Polygon' || className === 'Overlay.Polygon' ||
+                                        className === 'AMap.Polyline' || className === 'Overlay.Polyline' ||
+                                        className === 'AMap.Rectangle' || className === 'Overlay.Rectangle') {
+                                        // 检查是否是正在绘制的图形
+                                        if (!currentShape) {
+                                            currentShape = overlay;
+                                            console.log('右键获取到图形:', className);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            mouseTool.close();
+                            isDrawing = false;
+                            clearToolSelection();
+                            
+                            // 如果有图形，则进入编辑模式
+                            if (currentShape) {
+                                hasDrawnShape = true;
+                                disableToolButtons();
+                                document.getElementById('editBtn').disabled = false;
+                                console.log('右键结束绘制，自动进入编辑模式');
+                                setTimeout(function() {
+                                    startEdit();
+                                }, 100);
+                            } else {
+                                // 没有图形，重置工具按钮状态
+                                console.log('未获取到图形，重置工具按钮');
+                                enableToolButtons();
+                            }
+                        }
+                    });
+                });
+
+            } catch (e) {
+                console.error('初始化地图失败:', e);
+            }
+        }
+
+        function disableToolButtons() {
+            var btnPolygon = document.getElementById('btn-polygon');
+            if (btnPolygon) {
+                btnPolygon.classList.add('disabled');
+            }
+        }
+
+        function enableToolButtons() {
+            var btnPolygon = document.getElementById('btn-polygon');
+            if (btnPolygon) {
+                btnPolygon.classList.remove('disabled');
+            }
+        }
+
+        function selectTool(tool) {
+            // 只要存在图形就禁止绘制，不管 hasDrawnShape 状态
+            if (currentShape) {
+                console.log('已有绘制图形，请先清除后再绘制');
+                return;
+            }
+            
+            if (isDrawing) {
+                console.log('正在绘制中，请先完成当前绘制');
+                return;
+            }
+
+            currentTool = tool;
+            
+            document.querySelectorAll('.type-card-item').forEach(function(item) {
+                item.classList.remove('active');
+            });
+            document.querySelector('.type-card-item[data-type="' + tool + '"]').classList.add('active');
+            
+            if (mouseTool) {
+                isDrawing = true;
+                
+                switch(tool) {
+                    case 'rectangle':
+                        mouseTool.rectangle({
+                            strokeColor: "#FF33FF",
+                            strokeOpacity: 1,
+                            strokeWeight: 2,
+                            fillColor: "#1791fc",
+                            fillOpacity: 0.35
+                        });
+                        break;
+                    case 'polygon':
+                        mouseTool.polygon({
+                            strokeColor: "#FF33FF",
+                            strokeOpacity: 1,
+                            strokeWeight: 2,
+                            fillColor: "#1791fc",
+                            fillOpacity: 0.35
+                        });
+                        break;
+                    case 'polyline':
+                        mouseTool.polyline({
+                            strokeColor: "#FF33FF",
+                            strokeOpacity: 1,
+                            strokeWeight: 2
+                        });
+                        break;
+                }
+            }
+        }
+
+        function clearToolSelection() {
+            document.querySelectorAll('.type-card-item').forEach(function(item) {
+                item.classList.remove('active');
+            });
+        }
+
+        function startEdit() {
+            if (!currentShape) {
+                alert('请先绘制图形');
+                return;
+            }
+            
+            isEditing = true;
+            
+            var className = currentShape.CLASS_NAME;
+            var editorClass = null;
+            
+            if (className === 'AMap.Polygon' || className === 'Overlay.Polygon') {
+                editorClass = 'AMap.PolygonEditor';
+            } else if (className === 'AMap.Rectangle' || className === 'Overlay.Rectangle') {
+                editorClass = 'AMap.RectangleEditor';
+            } else if (className === 'AMap.Polyline' || className === 'Overlay.Polyline') {
+                editorClass = 'AMap.PolylineEditor';
+            }
+            
+            if (editorClass) {
+                AMap.plugin(editorClass, function() {
+                    if (className === 'AMap.Polygon' || className === 'Overlay.Polygon') {
+                        shapeEditor = new AMap.PolygonEditor(map, currentShape);
+                    } else if (className === 'AMap.Rectangle' || className === 'Overlay.Rectangle') {
+                        shapeEditor = new AMap.RectangleEditor(map, currentShape);
+                    } else if (className === 'AMap.Polyline' || className === 'Overlay.Polyline') {
+                        shapeEditor = new AMap.PolylineEditor(map, currentShape);
+                    }
+                    
+                    shapeEditor.on('end', function(e) {
+                        console.log('编辑结束');
+                    });
+                    
+                    shapeEditor.on('adjust', function(e) {
+                        console.log('调整中');
+                    });
+                    
+                    shapeEditor.open();
+                    console.log('编辑器已启动');
+                });
+            }
+            
+            document.getElementById('editBtn').disabled = true;
+            document.getElementById('closeEditBtn').disabled = false;
+        }
+
+        function closeEdit() {
+            if (shapeEditor) {
+                shapeEditor.close();
+                shapeEditor = null;
+            }
+            
+            isEditing = false;
+            
+            document.getElementById('editBtn').disabled = false;
+            document.getElementById('closeEditBtn').disabled = true;
+        }
+
+        function searchAddress() {
+            var address = document.getElementById('addressInput').value.trim();
+            if (!address) {
+                alert('请输入地址');
+                return;
+            }
+
+            if (!map) {
+                alert('地图尚未加载完成');
+                return;
+            }
+
+            console.log('开始搜索地址:', address);
+            
+            // 使用 PlaceSearch 进行地点搜索
+            AMap.plugin(['AMap.PlaceSearch'], function() {
+                var placeSearch = new AMap.PlaceSearch({
+                    city: '全国',
+                    pageSize: 1,
+                    pageIndex: 1
+                });
+                
+                placeSearch.search(address, function(status, result) {
+                    console.log('PlaceSearch 结果:', status, result);
+                    if (status === 'complete' && result.info === 'OK' && result.poiList && result.poiList.pois.length > 0) {
+                        var poi = result.poiList.pois[0];
+                        var location = poi.location;
+                        map.setCenter([location.lng, location.lat]);
+                        map.setZoom(15);
+                        console.log('地图已跳转到:', location.lng, location.lat, '地址:', poi.name);
+                    } else {
+                        // 如果 PlaceSearch 失败，尝试使用 Geocoder
+                        console.log('PlaceSearch 失败，尝试 Geocoder');
+                        AMap.plugin(['AMap.Geocoder'], function() {
+                            var geocoder = new AMap.Geocoder({
+                                city: "全国"
+                            });
+                            geocoder.getLocation(address, function(geoStatus, geoResult) {
+                                console.log('Geocoder 结果:', geoStatus, geoResult);
+                                if (geoStatus === 'complete' && geoResult.geocodes && geoResult.geocodes.length > 0) {
+                                    var location = geoResult.geocodes[0].location;
+                                    map.setCenter([location.lng, location.lat]);
+                                    map.setZoom(15);
+                                    console.log('地图已跳转到:', location.lng, location.lat);
+                                } else {
+                                    alert('地址搜索失败，请检查地址是否正确');
+                                }
+                            });
+                        });
+                    }
+                });
+            });
+        }
+
+        function clearShape() {
+            closeEdit();
+            
+            if (currentShape) {
+                currentShape.setMap(null);
+                currentShape = null;
+            }
+            
+            clearToolSelection();
+            hasDrawnShape = false;
+            isEditing = false;
+            
+            document.getElementById('editBtn').disabled = true;
+            document.getElementById('closeEditBtn').disabled = true;
+            
+            enableToolButtons();
+        }
+
+        function saveShape() {
+            // 关闭编辑模式（如果正在编辑）
+            if (isEditing) {
+                closeEdit();
+            }
+
+            var coords = [];
+            var type = '';
+            
+            // 如果有图形，获取图形数据
+            if (currentShape) {
+                type = currentShape.CLASS_NAME;
+                
+                if (type === 'AMap.Polygon' || type === 'Overlay.Polygon') {
+                    var path = currentShape.getPath();
+                    if (path && path.length > 0) {
+                        for (var i = 0; i < path.length; i++) {
+                            coords.push([path[i].lng, path[i].lat]);
+                        }
+                    }
+                } else if (type === 'AMap.Rectangle' || type === 'Overlay.Rectangle') {
+                    var bounds = currentShape.getBounds();
+                    var sw = bounds.getSouthWest();
+                    var ne = bounds.getNorthEast();
+                    coords = [
+                        [sw.lng, sw.lat],
+                        [ne.lng, sw.lat],
+                        [ne.lng, ne.lat],
+                        [sw.lng, ne.lat]
+                    ];
+                } else if (type === 'AMap.Polyline' || type === 'Overlay.Polyline') {
+                    var path = currentShape.getPath();
+                    if (path && path.length > 0) {
+                        for (var i = 0; i < path.length; i++) {
+                            coords.push([path[i].lng, path[i].lat]);
+                        }
+                    }
+                }
+            }
+
+            var areaData = {
+                coords: coords,
+                type: type
+            };
+
+            console.log('SAVE_AREA:' + JSON.stringify(areaData));
+            
+            if (drawCallback) {
+                drawCallback(JSON.stringify(areaData));
+            }
+            
+            // 显示保存成功提示
+            var hasCoords = coords && coords.length > 0;
+            var message = hasCoords ? '区域保存成功！' : '已保存空区域（无绘制图形）';
+            showToast(message);
+        }
+        
+        // 显示提示弹窗
+        function showToast(message) {
+            // 创建提示元素
+            var toast = document.createElement('div');
+            toast.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); ' +
+                'background: rgba(0, 0, 0, 0.8); color: white; padding: 20px 40px; ' +
+                'border-radius: 8px; font-size: 16px; z-index: 9999; text-align: center;';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            // 2秒后自动关闭
+            setTimeout(function() {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 2000);
+        }
+
+        function closeDialog() {
+            if (drawCallback) {
+                drawCallback('CLOSE_DIALOG');
+            }
+        }
+
+        // 加载已存在的区域（从Python传递过来的数据）
+        function loadExistingArea(coords, type) {
+            console.log('加载已存在区域:', type, coords);
+            
+            if (!coords || coords.length === 0) {
+                return false;
+            }
+
+            if (!mapReady || !map) {
+                pendingExistingArea = {
+                    coords: coords,
+                    type: type
+                };
+                console.log('地图尚未初始化完成，已暂存待加载区域');
+                return false;
+            }
+            
+            // 清除可能存在的临时图形
+            if (currentShape) {
+                currentShape.setMap(null);
+            }
+            
+            // 根据类型创建图形
+            if (type === 'AMap.Polygon' || type === 'Overlay.Polygon' || type === 'polygon') {
+                currentShape = new AMap.Polygon({
+                    path: coords,
+                    strokeColor: "#FF33FF",
+                    strokeOpacity: 1,
+                    strokeWeight: 2,
+                    fillColor: "#1791fc",
+                    fillOpacity: 0.35
+                });
+            } else if (type === 'AMap.Rectangle' || type === 'Overlay.Rectangle' || type === 'rectangle') {
+                // 矩形使用边界创建
+                if (coords.length === 4) {
+                    var bounds = new AMap.Bounds(coords[0], coords[2]);
+                    currentShape = new AMap.Rectangle({
+                        bounds: bounds,
+                        strokeColor: "#FF33FF",
+                        strokeOpacity: 1,
+                        strokeWeight: 2,
+                        fillColor: "#1791fc",
+                        fillOpacity: 0.35
+                    });
+                }
+            } else if (type === 'AMap.Polyline' || type === 'Overlay.Polyline' || type === 'polyline') {
+                currentShape = new AMap.Polyline({
+                    path: coords,
+                    strokeColor: "#FF33FF",
+                    strokeOpacity: 1,
+                    strokeWeight: 2
+                });
+            }
+            
+            if (currentShape) {
+                currentShape.setMap(map);
+                hasDrawnShape = true;
+                
+                // 禁用工具按钮（禁止新建）
+                disableToolButtons();
+                
+                // 启用编辑按钮
+                document.getElementById('editBtn').disabled = false;
+                
+                // 自动进入编辑模式
+                setTimeout(function() {
+                    startEdit();
+                }, 300);
+                
+                // 调整地图视野以显示整个区域
+                map.setFitView([currentShape]);
+                
+                console.log('已加载现有区域并进入编辑模式');
+                return true;
+            }
+
+            return false;
+        }
+
+        window.isDrawMapReady = function() {
+            return !!map && mapReady;
+        };
+
+        window.onload = function() {
+            if (typeof qt !== 'undefined') {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    if (channel.objects.drawHandler) {
+                        drawCallback = channel.objects.drawHandler.onDrawComplete;
+                        console.log('QWebChannel 初始化成功');
+                    }
+                    initMap();
+                });
+            } else {
+                console.log('qt 对象未定义，直接初始化地图');
+                initMap();
+            }
+        };
+    </script>
+</body>
+</html>

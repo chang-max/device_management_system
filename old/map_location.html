@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>地图定位</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* 防止闪烁和优化渲染性能 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+        }
+        body, html { width: 100%; height: 100%; font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif; }
+        .dialog-wrapper { width: 100%; height: 100%; display: flex; flex-direction: column; background: #fff; will-change: transform; transform: translateZ(0); -webkit-transform: translateZ(0); }
+        .dialog-header { padding: 15px 20px; border-bottom: 1px solid #dcdfe6; display: flex; justify-content: space-between; align-items: center; }
+        .dialog-title { font-size: 18px; font-weight: 500; color: #303133; }
+        .dialog-close { background: none; border: none; font-size: 24px; color: #909399; cursor: pointer; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+        .dialog-close:hover { color: #409eff; }
+        .dialog-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .search-bar { padding: 15px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #ebeef5; }
+        .search-bar span { color: #606266; font-size: 14px; min-width: 70px; }
+        .search-bar .search-input { flex: 1; }
+        .search-bar .search-input input { width: 100%; height: 36px; padding: 0 15px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; outline: none; }
+        .search-bar .search-input input:focus { border-color: #409eff; }
+        .search-bar .btn { padding: 8px 20px; border: 1px solid #dcdfe6; background: #fff; border-radius: 4px; cursor: pointer; font-size: 14px; color: #606266; transition: all 0.2s; }
+        .search-bar .btn:hover { color: #409eff; border-color: #c6e2ff; background: #ecf5ff; }
+        .search-bar .btn-primary { background: #409eff; border-color: #409eff; color: #fff; }
+        .search-bar .btn-primary:hover { background: #66b1ff; border-color: #66b1ff; }
+        .coord-display { padding: 10px 20px; background: #f5f7fa; border-bottom: 1px solid #ebeef5; font-size: 14px; color: #606266; }
+        .coord-display span { color: #303133; font-weight: 500; }
+        .map-container { flex: 1; position: relative; background: #f4f4f4; }
+        #container { width: 100%; height: 100%; }
+        .dialog-footer { padding: 15px 20px; border-top: 1px solid #dcdfe6; display: flex; justify-content: flex-end; gap: 10px; }
+        .dialog-footer .btn { padding: 10px 25px; border: 1px solid #dcdfe6; background: #fff; border-radius: 4px; cursor: pointer; font-size: 14px; color: #606266; transition: all 0.2s; }
+        .dialog-footer .btn:hover { color: #409eff; border-color: #c6e2ff; background: #ecf5ff; }
+        .dialog-footer .btn-primary { background: #409eff; border-color: #409eff; color: #fff; }
+        .dialog-footer .btn-primary:hover { background: #66b1ff; border-color: #66b1ff; }
+    </style>
+    <script>
+        // 高德地图安全密钥配置 - 必须在加载地图JS之前设置
+        window._AMapSecurityConfig = {
+            securityJsCode: '{{MAP_SECURITY_KEY}}'
+        };
+    </script>
+    <script>
+        // 禁用高德地图的动画效果以提升性能
+        window.AMapConfig = {
+            // 禁用硬件加速检测，强制使用软件渲染（在PyQt中更稳定）
+            forceSoftwareRendering: false,
+            // 减少帧率
+            frameRate: 30
+        };
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key={{MAP_KEY}}&plugin=AMap.Geocoder,AMap.PlaceSearch"></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+    <div class="dialog-wrapper">
+        <div class="dialog-header">
+            <span class="dialog-title">地图定位</span>
+        </div>
+        <div class="dialog-body">
+            <div class="search-bar">
+                <span>当前地址:</span>
+                <div class="search-input">
+                    <input type="text" id="addressInput" placeholder="请输入地址进行搜索">
+                </div>
+                <button class="btn btn-primary" onclick="searchAddress()">查找</button>
+            </div>
+            <div class="coord-display">
+                当前经纬度: <span id="coordDisplay">未选择位置</span>
+            </div>
+            <div class="map-container">
+                <div id="container"></div>
+            </div>
+        </div>
+        <div class="dialog-footer">
+            <button class="btn" onclick="closeDialog()">取消</button>
+            <button class="btn btn-primary" onclick="confirmLocation()">确定</button>
+        </div>
+    </div>
+
+    <script>
+        var map = null;
+        var marker = null;
+        var circle = null;  // 范围圆圈
+        var geocoder = null;
+        var placeSearch = null;
+        var currentPosition = null;
+        var currentAddress = '';
+        var mapReady = false;
+        var locationHandler = null;
+
+        // 初始化地图
+        function initMap() {
+            try {
+                map = new AMap.Map('container', {
+                    zoom: 12,
+                    center: [119.412889, 32.394345], // 默认中心点（扬州）
+                    viewMode: '2D',
+                    // 性能优化配置
+                    animateEnable: false,
+                    keyboardEnable: false,
+                    doubleClickZoom: false,
+                    scrollWheel: true,
+                    touchZoom: false,
+                    dragEnable: true,
+                    zooms: [3, 20],
+                    mapStyle: 'amap://styles/normal',
+                    rotateEnable: false,
+                    pitchEnable: false,
+                    defaultCursor: 'default',
+                    // 性能优化：减少地图细节
+                    features: ['bg', 'road', 'building', 'point'],
+                    // 禁用3D建筑
+                    showBuildingBlock: false
+                });
+
+                // 加载地理编码插件
+                AMap.plugin(['AMap.Geocoder', 'AMap.PlaceSearch'], function() {
+                    geocoder = new AMap.Geocoder({
+                        radius: 1000,
+                        extensions: 'all'
+                    });
+                    
+                    placeSearch = new AMap.PlaceSearch({
+                        pageSize: 5,
+                        pageIndex: 1,
+                        extensions: 'all'
+                    });
+                    
+                    mapReady = true;
+                    console.log('地图及插件加载完成');
+                });
+
+                // 地图点击事件
+                map.on('click', function(e) {
+                    var lnglat = e.lnglat;
+                    currentPosition = [lnglat.getLng(), lnglat.getLat()];
+                    updateMarker(currentPosition);
+                    reverseGeocode(currentPosition);
+                });
+
+                // 初始化WebChannel
+                initWebChannel();
+
+            } catch (e) {
+                console.error('初始化地图失败:', e);
+            }
+        }
+
+        // 初始化WebChannel通信
+        function initWebChannel() {
+            if (typeof qt !== 'undefined') {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    locationHandler = channel.objects.locationHandler;
+                    console.log('WebChannel初始化完成');
+                });
+            } else {
+                console.log('Qt环境未就绪，延迟初始化WebChannel');
+                setTimeout(initWebChannel, 500);
+            }
+        }
+
+        // 搜索地址
+        function searchAddress() {
+            if (!mapReady || !placeSearch) {
+                alert('地图尚未加载完成，请稍候');
+                return;
+            }
+
+            var address = document.getElementById('addressInput').value.trim();
+            if (!address) {
+                alert('请输入地址');
+                return;
+            }
+
+            placeSearch.search(address, function(status, result) {
+                if (status === 'complete' && result.info === 'OK') {
+                    var poiList = result.poiList.pois;
+                    if (poiList && poiList.length > 0) {
+                        var poi = poiList[0];
+                        var location = poi.location;
+                        currentPosition = [location.getLng(), location.getLat()];
+                        currentAddress = poi.name + ' ' + poi.address;
+                        
+                        // 更新地图中心
+                        map.setCenter(currentPosition);
+                        map.setZoom(16);
+                        
+                        // 更新标记
+                        updateMarker(currentPosition);
+                        
+                        // 更新地址输入框
+                        document.getElementById('addressInput').value = currentAddress;
+                        
+                        // 更新坐标显示
+                        updateCoordDisplay();
+                        
+                        console.log('搜索到位置:', currentAddress, currentPosition);
+                    } else {
+                        alert('未找到该地址，请尝试其他关键词');
+                    }
+                } else {
+                    alert('搜索失败，请检查网络连接');
+                }
+            });
+        }
+
+        // 逆地理编码（坐标转地址）
+        function reverseGeocode(lnglat) {
+            if (!geocoder) return;
+
+            geocoder.getAddress(lnglat, function(status, result) {
+                if (status === 'complete' && result.regeocode) {
+                    var addressComponent = result.regeocode.addressComponent;
+                    var formattedAddress = result.regeocode.formattedAddress;
+                    
+                    currentAddress = formattedAddress;
+                    document.getElementById('addressInput').value = currentAddress;
+                    updateCoordDisplay();
+                    
+                    console.log('逆地理编码结果:', currentAddress);
+                }
+            });
+        }
+
+        // 更新标记位置
+        function updateMarker(lnglat) {
+            // 更新或创建圆圈
+            if (circle) {
+                circle.setCenter(lnglat);
+            } else {
+                circle = new AMap.Circle({
+                    center: lnglat,
+                    radius: 100,  // 半径100米
+                    fillColor: '#409eff',
+                    fillOpacity: 0.2,
+                    strokeColor: '#409eff',
+                    strokeWeight: 2,
+                    strokeOpacity: 0.8,
+                    map: map
+                });
+            }
+
+            if (marker) {
+                marker.setPosition(lnglat);
+            } else {
+                // 创建自定义图标
+                var icon = new AMap.Icon({
+                    size: new AMap.Size(40, 40),
+                    image: 'https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png',
+                    imageSize: new AMap.Size(40, 40),
+                    imageOffset: new AMap.Pixel(0, 0)
+                });
+
+                marker = new AMap.Marker({
+                    position: lnglat,
+                    map: map,
+                    draggable: true,
+                    icon: icon,
+                    offset: new AMap.Pixel(-20, -40), // 调整图标偏移，使尖端对准位置
+                    title: '拖动调整位置'
+                });
+
+                // 添加信息窗体
+                var infoWindow = new AMap.InfoWindow({
+                    content: '<div style="padding: 5px 10px; font-size: 12px;">拖动标记调整位置</div>',
+                    offset: new AMap.Pixel(0, -40)
+                });
+
+                // 鼠标悬停显示提示
+                marker.on('mouseover', function() {
+                    infoWindow.open(map, marker.getPosition());
+                });
+
+                marker.on('mouseout', function() {
+                    infoWindow.close();
+                });
+
+                // 标记拖动事件
+                marker.on('dragend', function(e) {
+                    currentPosition = [e.lnglat.getLng(), e.lnglat.getLat()];
+                    // 更新圆圈位置
+                    if (circle) {
+                        circle.setCenter(currentPosition);
+                    }
+                    reverseGeocode(currentPosition);
+                });
+
+                // 点击标记事件
+                marker.on('click', function() {
+                    // 标记点击效果：闪烁圆圈
+                    if (circle) {
+                        var originalFillOpacity = circle.getFillOpacity();
+                        var originalStrokeOpacity = circle.getStrokeOpacity();
+                        circle.setFillOpacity(0.5);
+                        circle.setStrokeOpacity(1);
+                        setTimeout(function() {
+                            circle.setFillOpacity(originalFillOpacity);
+                            circle.setStrokeOpacity(originalStrokeOpacity);
+                        }, 300);
+                    }
+                });
+            }
+
+            // 确保标记在地图可视区域内
+            map.setCenter(lnglat);
+        }
+
+        // 更新坐标显示
+        function updateCoordDisplay() {
+            if (currentPosition) {
+                var coordText = currentPosition[0].toFixed(6) + ',' + currentPosition[1].toFixed(6);
+                document.getElementById('coordDisplay').innerText = coordText;
+            }
+        }
+
+        // 设置初始位置（供Python调用）
+        function setInitialPosition(lng, lat, address) {
+            if (!mapReady) {
+                setTimeout(function() {
+                    setInitialPosition(lng, lat, address);
+                }, 500);
+                return;
+            }
+
+            currentPosition = [lng, lat];
+            currentAddress = address || '';
+            
+            map.setCenter(currentPosition);
+            map.setZoom(16);
+            updateMarker(currentPosition);
+            
+            if (currentAddress) {
+                document.getElementById('addressInput').value = currentAddress;
+            } else {
+                reverseGeocode(currentPosition);
+            }
+            
+            updateCoordDisplay();
+        }
+
+        // 确认位置
+        function confirmLocation() {
+            if (!currentPosition) {
+                alert('请先在地图上选择位置');
+                return;
+            }
+
+            // 获取当前时区偏移（分钟）
+            var timezoneOffset = new Date().getTimezoneOffset();
+            // 转换为时区数字（-12到12），注意：getTimezoneOffset返回的是本地时间相对于UTC的偏移，需要取反
+            var timezone = -Math.round(timezoneOffset / 60 * 10) / 10;  // 保留一位小数
+
+            var locationData = {
+                lng: currentPosition[0],
+                lat: currentPosition[1],
+                address: currentAddress || document.getElementById('addressInput').value,
+                timezone: timezone  // 时区数字，如：8（东八区）或 -5（西五区）
+            };
+
+            console.log('确认位置:', locationData);
+
+            // 通过WebChannel发送数据到Python
+            if (locationHandler) {
+                locationHandler.onLocationConfirm(JSON.stringify(locationData));
+            } else {
+                console.log('locationHandler未就绪');
+            }
+        }
+
+        // 关闭对话框
+        function closeDialog() {
+            console.log('关闭对话框');
+            if (locationHandler) {
+                locationHandler.onLocationCancel('CLOSE_DIALOG');
+            }
+        }
+
+        // 页面加载完成后初始化地图
+        window.onload = initMap;
+    </script>
+</body>
+</html>

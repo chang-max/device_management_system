@@ -1,0 +1,12 @@
+# 设备管理系统服务端依赖
+# Python 3.8+
+
+# 数据库
+pymysql>=1.1.0
+DBUtils>=3.0.0
+
+# MQTT
+paho-mqtt>=2.0.0
+
+# Redis
+redis>=5.0.0

@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>GPS坐标编辑</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* 防止闪烁和优化渲染性能 */
+        * {
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+        }
+        body, html {width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;}
+        #container {width: 100%; height: 100%; position: relative;}
+
+        /* 区域筛选面板 */
+        .filter-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255,255,255,0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+            max-height: 60%;
+            overflow-y: auto;
+            z-index: 1000;
+            min-width: 200px;
+            max-width: 280px;
+            /* 优化渲染性能，防止闪烁 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .filter-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #333;
+        }
+        .area-tree {
+            margin-bottom: 10px;
+        }
+        .tree-item {
+            padding: 5px 0;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .tree-item input[type="checkbox"] {
+            cursor: pointer;
+        }
+        .tree-item label {
+            cursor: pointer;
+            font-size: 13px;
+            flex: 1;
+        }
+        .tree-children {
+            margin-left: 20px;
+        }
+        .search-btn {
+            width: 100%;
+            padding: 8px;
+            background: #409eff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+        .search-btn:hover {
+            background: #66b1ff;
+        }
+
+        /* 编辑控制面板 */
+        .edit-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255,255,255,0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            min-width: 150px;
+            /* 优化渲染性能，防止闪烁 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .edit-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #333;
+        }
+        .edit-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .edit-toggle input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        .edit-toggle label {
+            cursor: pointer;
+            font-size: 13px;
+            color: #333;
+        }
+        .status-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .status-text.editing {
+            color: #67c23a;
+        }
+
+        /* 设备标记样式 */
+        .device-marker {
+            width: 28px;
+            height: 28px;
+            background: #409eff;
+            border: 3px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            cursor: grab;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            /* 移除过渡动画以减少卡顿 */
+            /* transition: transform 0.2s, box-shadow 0.2s; */
+            position: relative;
+            /* 优化渲染性能 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .device-marker:hover {
+            transform: scale(1.2) translateZ(0);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            z-index: 10000 !important;
+        }
+        .device-marker.dragging {
+            cursor: grabbing;
+            transform: scale(1.3) translateZ(0);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+            z-index: 10001 !important;
+        }
+
+        /* 设备信息提示 */
+        .device-tooltip {
+            position: fixed;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            padding: 12px;
+            min-width: 220px;
+            max-width: 300px;
+            pointer-events: none;
+            z-index: 100000;
+            display: none;
+            /* 优化渲染性能，防止闪烁 */
+            will-change: transform, opacity;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .device-tooltip h4 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .device-tooltip p {
+            margin: 4px 0;
+            font-size: 12px;
+            color: #666;
+        }
+        .device-tooltip .coord {
+            color: #409eff;
+            font-weight: 500;
+        }
+
+        /* 保存按钮 */
+        .save-btn {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            background: #67c23a;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 1000;
+            /* 优化渲染性能，防止闪烁 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .save-btn:hover {
+            background: #85ce61;
+        }
+        .save-btn:disabled {
+            background: #c0c4cc;
+            cursor: not-allowed;
+        }
+
+        /* 设备选择对话框 */
+        .device-select-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+        .device-select-modal.show {
+            display: flex;
+        }
+        .device-select-content {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            min-width: 300px;
+            max-width: 400px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .device-select-content h3 {
+            margin: 0 0 15px 0;
+            font-size: 16px;
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .device-select-item {
+            padding: 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .device-select-item:hover {
+            background: #f5f7fa;
+            border-color: #409eff;
+        }
+        .device-select-item.selected {
+            background: #ecf5ff;
+            border-color: #409eff;
+        }
+        .device-select-item .device-name {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .device-select-item .device-id {
+            font-size: 12px;
+            color: #666;
+        }
+        .device-select-buttons {
+            margin-top: 15px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .device-select-buttons button {
+            padding: 8px 16px;
+            border: 1px solid #dcdfe6;
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .device-select-buttons button.primary {
+            background: #409eff;
+            border-color: #409eff;
+            color: white;
+        }
+
+        /* 设备计数 */
+        .device-count {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(255,255,255,0.95);
+            padding: 10px 15px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 1000;
+            font-size: 13px;
+            color: #333;
+            /* 优化渲染性能，防止闪烁 */
+            will-change: transform;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+        }
+        .device-count span {
+            color: #409eff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <!-- 区域筛选面板 -->
+    <div class="filter-panel">
+        <h3>区域筛选</h3>
+        <div class="area-tree" id="areaTree"></div>
+        <button class="search-btn" onclick="searchDevices()">搜索设备</button>
+    </div>
+
+    <!-- 编辑控制面板 -->
+    <div class="edit-panel">
+        <h3>编辑控制</h3>
+        <div class="edit-toggle">
+            <input type="checkbox" id="editMode" onchange="toggleEditMode()">
+            <label for="editMode">启动编辑</label>
+        </div>
+        <div class="status-text" id="statusText">编辑模式：关闭</div>
+    </div>
+
+    <!-- 设备计数 -->
+    <div class="device-count">
+        显示设备：<span id="deviceCount">0</span> 个
+    </div>
+
+    <!-- 保存按钮 -->
+    <button class="save-btn" id="saveBtn" onclick="saveChanges()" disabled>保存修改</button>
+
+    <!-- 设备信息提示 -->
+    <div class="device-tooltip" id="deviceTooltip"></div>
+
+    <!-- 设备选择对话框 -->
+    <div class="device-select-modal" id="deviceSelectModal">
+        <div class="device-select-content">
+            <h3>选择要编辑的设备</h3>
+            <div id="deviceSelectList"></div>
+            <div class="device-select-buttons">
+                <button onclick="closeDeviceSelectModal()">取消</button>
+                <button class="primary" onclick="confirmDeviceSelection()">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 隐藏 Canvas2D willReadFrequently 警告
+        const originalGetContext = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+            if (type === '2d') {
+                attributes = attributes || {};
+                attributes.willReadFrequently = true;
+            }
+            return originalGetContext.call(this, type, attributes);
+        };
+    </script>
+    <script>
+        window._AMapSecurityConfig = {
+            securityJsCode: '{{MAP_SECURITY_KEY}}'
+        };
+    </script>
+    <script>
+        // 禁用高德地图的动画效果以提升性能
+        window.AMapConfig = {
+            // 禁用硬件加速检测，强制使用软件渲染（在PyQt中更稳定）
+            forceSoftwareRendering: false,
+            // 减少帧率
+            frameRate: 30
+        };
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key={{MAP_KEY}}&plugin=AMap.Geocoder"></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script type="text/javascript">
+        var map = null;
+        var mapReady = false;
+        var markers = {};
+        var areaData = [];
+        var deviceData = [];
+        var filteredDevices = [];
+        var editMode = false;
+        var changedDevices = {}; // 记录修改过的设备
+        var gpsEditHandler = null;
+        var selectedAreaKeys = new Set();
+        var geocoder = null; // 地理编码服务
+        var selectedEditDevice = null; // 当前选中的编辑设备
+        var currentOverlappingDevices = []; // 当前重合的设备列表
+        var isDraggingFromGroup = false; // 是否正在拖动重合设备中的一个
+
+        // 防抖函数
+        function debounce(func, wait) {
+            var timeout;
+            return function() {
+                var context = this, args = arguments;
+                clearTimeout(timeout);
+                timeout = setTimeout(function() {
+                    func.apply(context, args);
+                }, wait);
+            };
+        }
+
+        function initMap() {
+            try {
+                map = new AMap.Map('container', {
+                    zoom: 10,
+                    center: [116.397428, 39.90923],
+                    viewMode: '2D',
+                    renderOptions: {
+                        preserveDrawingBuffer: false
+                    },
+                    animateEnable: false,
+                    keyboardEnable: false,
+                    doubleClickZoom: false,
+                    scrollWheel: true,
+                    touchZoom: false,
+                    dragEnable: true,
+                    zooms: [3, 20],
+                    mapStyle: 'amap://styles/normal',
+                    rotateEnable: false,
+                    pitchEnable: false,
+                    defaultCursor: 'default',
+                    // 性能优化：减少地图细节
+                    features: ['bg', 'road', 'building', 'point'],
+                    // 禁用3D建筑
+                    showBuildingBlock: false
+                });
+
+                // 地图移动/缩放时简化渲染
+                var isMoving = false;
+                map.on('movestart', function() {
+                    isMoving = true;
+                    optimizeMarkersForPerformance(true);
+                });
+                map.on('moveend', function() {
+                    isMoving = false;
+                    setTimeout(function() {
+                        optimizeMarkersForPerformance(false);
+                    }, 100);
+                });
+                map.on('zoomstart', function() {
+                    isMoving = true;
+                    optimizeMarkersForPerformance(true);
+                });
+                map.on('zoomend', function() {
+                    isMoving = false;
+                    setTimeout(function() {
+                        optimizeMarkersForPerformance(false);
+                    }, 100);
+                });
+
+                // 初始化地理编码服务
+                AMap.plugin(['AMap.Geocoder'], function() {
+                    geocoder = new AMap.Geocoder({
+                        radius: 1000,
+                        extensions: 'all'
+                    });
+                    console.log('地理编码服务初始化完成');
+                });
+
+                map.on('complete', function() {
+                    mapReady = true;
+                    console.log('GPS编辑地图加载完成');
+                    // 通知Python地图已就绪
+                    if (gpsEditHandler) {
+                        gpsEditHandler.onMapReady();
+                    }
+                });
+
+                map.on('error', function(e) {
+                    console.error('地图错误:', e);
+                });
+            } catch (e) {
+                console.error('初始化地图失败:', e);
+            }
+        }
+
+        // 性能优化：移动/缩放时简化标记显示
+        function optimizeMarkersForPerformance(enable) {
+            var deviceMarkers = document.querySelectorAll('.device-marker');
+            if (enable) {
+                deviceMarkers.forEach(function(marker) {
+                    marker.style.opacity = '0.6';
+                });
+            } else {
+                deviceMarkers.forEach(function(marker) {
+                    marker.style.opacity = '1';
+                });
+            }
+        }
+
+        // 加载区域数据
+        function loadAreaData(data) {
+            areaData = data || [];
+            renderAreaTree();
+        }
+
+        // 加载设备数据
+        function loadDeviceData(devices) {
+            deviceData = devices || [];
+            console.log('加载设备数据:', deviceData.length, '个设备');
+        }
+
+        // 渲染区域树
+        function renderAreaTree() {
+            var treeContainer = document.getElementById('areaTree');
+            treeContainer.innerHTML = '';
+
+            function renderNode(node, level) {
+                var div = document.createElement('div');
+                div.className = 'tree-item';
+                div.style.paddingLeft = (level * 15) + 'px';
+
+                var checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.dataset.key = node._key || node.name;
+                checkbox.dataset.name = node.name;
+                checkbox.onchange = function() {
+                    if (this.checked) {
+                        selectedAreaKeys.add(this.dataset.key);
+                    } else {
+                        selectedAreaKeys.delete(this.dataset.key);
+                    }
+                };
+
+                var label = document.createElement('label');
+                label.textContent = node.name;
+                label.htmlFor = checkbox.dataset.key;
+
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                treeContainer.appendChild(div);
+
+                // 递归渲染子节点
+                if (node.children && node.children.length > 0) {
+                    var childrenDiv = document.createElement('div');
+                    childrenDiv.className = 'tree-children';
+                    treeContainer.appendChild(childrenDiv);
+                    node.children.forEach(function(child) {
+                        renderNode(child, level + 1);
+                    });
+                }
+            }
+
+            areaData.forEach(function(node) {
+                renderNode(node, 0);
+            });
+        }
+
+        // 搜索设备（根据选中区域筛选）
+        function searchDevices() {
+            // 清除现有标记
+            clearAllMarkers();
+
+            // 筛选设备
+            if (selectedAreaKeys.size === 0) {
+                // 未选择区域，显示所有设备
+                filteredDevices = deviceData.filter(function(d) {
+                    return d.lng && d.lat;
+                });
+            } else {
+                // 根据选中区域筛选
+                filteredDevices = deviceData.filter(function(device) {
+                    if (!device.lng || !device.lat) return false;
+
+                    // 检查设备所属区域是否匹配
+                    var areaPath = device.areaPath || [];
+                    for (var i = 0; i < areaPath.length; i++) {
+                        var areaKey = areaPath.slice(0, i + 1).join('__');
+                        if (selectedAreaKeys.has(areaKey) || selectedAreaKeys.has(areaPath[i])) {
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+            }
+
+            // 显示筛选后的设备
+            showDevices();
+            updateDeviceCount();
+
+            // 调整地图视野
+            if (filteredDevices.length > 0) {
+                adjustMapView();
+            }
+        }
+
+        // 显示设备标记
+        function showDevices() {
+            // 按坐标分组，处理重叠设备
+            var positionGroups = {};
+            filteredDevices.forEach(function(device) {
+                var key = device.lng + ',' + device.lat;
+                if (!positionGroups[key]) {
+                    positionGroups[key] = [];
+                }
+                positionGroups[key].push(device);
+            });
+
+            // 创建标记（重叠设备只显示最上层一个）
+            for (var posKey in positionGroups) {
+                var devices = positionGroups[posKey];  // 修复：使用 posKey 而不是 key
+                if (!devices || devices.length === 0) continue;
+                // 只显示第一个设备，但保存所有设备信息
+                var displayDevice = devices[0];
+                displayDevice._overlappingDevices = devices;
+                createDeviceMarker(displayDevice);
+            }
+        }
+
+        // 创建设备标记
+        function createDeviceMarker(device) {
+            var markerKey = device.deviceId;
+
+            var markerContent = document.createElement('div');
+            markerContent.className = 'device-marker';
+            markerContent.id = 'marker-' + markerKey;
+            markerContent.innerHTML = '●';
+            markerContent.dataset.deviceId = device.deviceId;
+
+            // 如果有重叠设备，显示数量
+            if (device._overlappingDevices && device._overlappingDevices.length > 1) {
+                markerContent.innerHTML = device._overlappingDevices.length;
+            }
+
+            var lng = parseFloat(device.lng);
+            var lat = parseFloat(device.lat);
+
+            var marker = new AMap.Marker({
+                position: [lng, lat],
+                content: markerContent,
+                offset: new AMap.Pixel(-14, -14),
+                extData: device,
+                draggable: false // 默认不可拖动
+            });
+
+            // 鼠标悬停显示信息
+            var tooltip = document.getElementById('deviceTooltip');
+            markerContent.addEventListener('mouseenter', function(e) {
+                showDeviceTooltip(device, e);
+            });
+
+            markerContent.addEventListener('mousemove', function(e) {
+                updateTooltipPosition(e);
+            });
+
+            markerContent.addEventListener('mouseleave', function() {
+                hideDeviceTooltip();
+            });
+
+            // 双击事件 - 弹出设备选择框
+            marker.on('dblclick', function(e) {
+                if (!editMode) return;
+                
+                // 只有双击才弹出设备选择对话框
+                if (device._overlappingDevices && device._overlappingDevices.length > 1) {
+                    selectedEditDevice = null;
+                    isDraggingFromGroup = false;
+                    showDeviceSelectModal(device._overlappingDevices, device);
+                }
+            });
+
+            // 编辑模式下的拖动事件
+            marker.on('dragstart', function(e) {
+                if (!editMode) return;
+                markerContent.classList.add('dragging');
+            });
+
+            marker.on('dragend', function(e) {
+                if (!editMode) return;
+                markerContent.classList.remove('dragging');
+
+                var newPosition = e.target.getPosition();
+                var newLng = newPosition.lng.toFixed(6);
+                var newLat = newPosition.lat.toFixed(6);
+
+                // 获取设备ID
+                var deviceId = device.deviceId;
+                
+                // 如果选中了特定设备（通过双击选择分离出来的），只更新该设备
+                if (selectedEditDevice && selectedEditDevice.deviceId === deviceId && isDraggingFromGroup) {
+                    updateDevicePosition(selectedEditDevice, newLng, newLat);
+                } else if (currentOverlappingDevices && currentOverlappingDevices.length > 1) {
+                    // 检查是否是重合设备组的直接拖动（未选择分离）
+                    // 使用 currentOverlappingDevices 而不是 device._overlappingDevices
+                    var isInOverlappingGroup = currentOverlappingDevices.some(function(d) {
+                        return d.deviceId === deviceId;
+                    });
+                    
+                    if (isInOverlappingGroup && !isDraggingFromGroup) {
+                        // 重合设备直接拖动 = 更新所有重合设备坐标
+                        currentOverlappingDevices.forEach(function(overlapDevice) {
+                            if (overlapDevice) {
+                                updateDevicePosition(overlapDevice, newLng, newLat);
+                            }
+                        });
+                    } else {
+                        // 非重合设备或已分离，正常更新
+                        updateDevicePosition(device, newLng, newLat);
+                    }
+                } else {
+                    // 非重合设备，正常更新
+                    updateDevicePosition(device, newLng, newLat);
+                }
+            });
+
+            marker.setMap(map);
+            markers[markerKey] = marker;
+        }
+
+        // 显示设备信息提示
+        function showDeviceTooltip(device, e) {
+            var tooltip = document.getElementById('deviceTooltip');
+            var overlappingDevices = device._overlappingDevices;
+
+            var html = '';
+            
+            // 如果有重合设备（2个或以上），显示所有重合设备信息
+            if (overlappingDevices && overlappingDevices.length >= 2) {
+                // 第一行显示区域
+                var areaText = device.area || '-';
+                html += '<h4 style="margin: 0 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">' + areaText + '</h4>';
+                html += '<div style="max-height: 200px; overflow-y: auto;">';
+                overlappingDevices.forEach(function(dev, index) {
+                    if (!dev) return;
+                    html += '<div style="padding: 4px 0; ' + (index === overlappingDevices.length - 1 ? '' : 'border-bottom: 1px solid #f0f0f0;') + '">' +
+                           '<p style="margin: 0; font-size: 12px; color: #333;">' + (dev.deviceName || '未命名设备') + ' - ' + (dev.deviceId || '-') + '</p>' +
+                           '</div>';
+                });
+                html += '</div>';
+            } else {
+                // 单个设备或已分离设备，显示简单信息
+                html = '<h4>' + (device.deviceName || '未命名设备') + '</h4>' +
+                      '<p><strong>设备号:</strong> ' + (device.deviceId || '-') + '</p>' +
+                      '<p><strong>经度:</strong> <span class="coord">' + (device.lng || '-') + '</span></p>' +
+                      '<p><strong>纬度:</strong> <span class="coord">' + (device.lat || '-') + '</span></p>' +
+                      '<p><strong>区域:</strong> ' + (device.area || '-') + '</p>';
+            }
+
+            tooltip.innerHTML = html;
+            tooltip.style.display = 'block';
+            updateTooltipPosition(e);
+        }
+
+        // 更新提示位置
+        function updateTooltipPosition(e) {
+            var tooltip = document.getElementById('deviceTooltip');
+            tooltip.style.left = (e.clientX + 15) + 'px';
+            tooltip.style.top = (e.clientY - 10) + 'px';
+        }
+
+        // 隐藏设备信息提示
+        function hideDeviceTooltip() {
+            var tooltip = document.getElementById('deviceTooltip');
+            tooltip.style.display = 'none';
+        }
+
+        // 切换编辑模式
+        function toggleEditMode() {
+            editMode = document.getElementById('editMode').checked;
+            var statusText = document.getElementById('statusText');
+            var saveBtn = document.getElementById('saveBtn');
+
+            if (editMode) {
+                statusText.textContent = '编辑模式：开启（可拖动设备）';
+                statusText.classList.add('editing');
+                saveBtn.disabled = Object.keys(changedDevices).length === 0;
+            } else {
+                statusText.textContent = '编辑模式：关闭';
+                statusText.classList.remove('editing');
+            }
+
+            // 更新所有标记的拖动状态
+            for (var key in markers) {
+                var marker = markers[key];
+                if (marker) {
+                    marker.setDraggable(editMode);
+                }
+            }
+        }
+
+        // 更新设备位置
+        function updateDevicePosition(device, newLng, newLat) {
+            // 记录修改
+            var oldLng = device.lng;
+            var oldLat = device.lat;
+
+            device.lng = newLng;
+            device.lat = newLat;
+
+            // 准备设备数据
+            var deviceData = {
+                deviceId: device.deviceId,
+                deviceName: device.deviceName,
+                oldLng: oldLng,
+                oldLat: oldLat,
+                newLng: newLng,
+                newLat: newLat,
+                newAddress: ''  // 将通过逆地理编码获取
+            };
+
+            // 启用保存按钮
+            document.getElementById('saveBtn').disabled = false;
+
+            console.log('设备位置已修改:', device.deviceId, '新坐标:', newLng, newLat);
+
+            // 通过逆地理编码获取新地址
+            if (geocoder) {
+                geocoder.getAddress([newLng, newLat], function(status, result) {
+                    if (status === 'complete' && result.regeocode) {
+                        var address = result.regeocode.formattedAddress;
+                        deviceData.newAddress = address;
+                        console.log('获取到新地址:', address);
+                    } else {
+                        console.log('逆地理编码失败，使用空地址');
+                        deviceData.newAddress = '';
+                    }
+
+                    // 保存到修改记录
+                    changedDevices[device.deviceId] = deviceData;
+
+                    // 通知Python（包含地址信息）
+                    if (gpsEditHandler) {
+                        gpsEditHandler.onDeviceMoved(JSON.stringify(deviceData));
+                    }
+                });
+            } else {
+                // 地理编码服务未就绪，直接保存
+                changedDevices[device.deviceId] = deviceData;
+
+                if (gpsEditHandler) {
+                    gpsEditHandler.onDeviceMoved(JSON.stringify(deviceData));
+                }
+            }
+        }
+
+        // 保存修改
+        function saveChanges() {
+            if (Object.keys(changedDevices).length === 0) {
+                alert('没有需要保存的修改');
+                return;
+            }
+
+            // 通知Python保存数据
+            if (gpsEditHandler) {
+                gpsEditHandler.onSaveChanges(JSON.stringify(changedDevices));
+            }
+
+            console.log('保存修改:', changedDevices);
+        }
+
+        // 清除所有标记
+        function clearAllMarkers() {
+            for (var key in markers) {
+                if (markers[key]) {
+                    markers[key].setMap(null);
+                }
+            }
+            markers = {};
+        }
+
+        // 更新设备计数
+        function updateDeviceCount() {
+            document.getElementById('deviceCount').textContent = filteredDevices.length;
+        }
+
+        // 调整地图视野
+        function adjustMapView() {
+            if (filteredDevices.length === 0) return;
+
+            var lngs = [];
+            var lats = [];
+
+            filteredDevices.forEach(function(device) {
+                if (device.lng && device.lat) {
+                    lngs.push(parseFloat(device.lng));
+                    lats.push(parseFloat(device.lat));
+                }
+            });
+
+            if (lngs.length === 0) return;
+
+            var minLng = Math.min.apply(null, lngs);
+            var maxLng = Math.max.apply(null, lngs);
+            var minLat = Math.min.apply(null, lats);
+            var maxLat = Math.max.apply(null, lats);
+
+            // 设置地图视野
+            map.setBounds(new AMap.Bounds([minLng, minLat], [maxLng, maxLat]), false, [50, 50, 50, 50]);
+        }
+
+        // 保存成功后调用
+        function onSaveSuccess() {
+            changedDevices = {};
+            document.getElementById('saveBtn').disabled = true;
+            alert('保存成功！');
+        }
+
+        // 保存失败后调用
+        function onSaveFailed(error) {
+            alert('保存失败: ' + error);
+        }
+
+        // 显示设备选择对话框
+        function showDeviceSelectModal(devices, originalDevice) {
+            if (!devices || devices.length === 0) {
+                console.error('showDeviceSelectModal: devices is empty');
+                return;
+            }
+            
+            // 过滤掉无效设备
+            currentOverlappingDevices = devices.filter(function(d) { return d && d.deviceId; });
+            selectedEditDevice = null;
+            
+            var modal = document.getElementById('deviceSelectModal');
+            var list = document.getElementById('deviceSelectList');
+            list.innerHTML = '';
+            
+            currentOverlappingDevices.forEach(function(device, index) {
+                var item = document.createElement('div');
+                item.className = 'device-select-item';
+                item.dataset.index = index;
+                item.dataset.deviceId = device.deviceId;
+                item.innerHTML = 
+                    '<div class="device-name">' + (device.deviceName || '未命名设备') + '</div>' +
+                    '<div class="device-id">设备号: ' + device.deviceId + '</div>';
+                
+                item.onclick = function() {
+                    // 移除其他选中状态
+                    list.querySelectorAll('.device-select-item').forEach(function(el) {
+                        el.classList.remove('selected');
+                    });
+                    // 添加当前选中状态
+                    item.classList.add('selected');
+                    selectedEditDevice = device;
+                };
+                
+                list.appendChild(item);
+            });
+            
+            modal.classList.add('show');
+        }
+
+        // 关闭设备选择对话框
+        function closeDeviceSelectModal() {
+            var modal = document.getElementById('deviceSelectModal');
+            modal.classList.remove('show');
+            // 不要在这里清空 selectedEditDevice，因为 confirmDeviceSelection 还需要用它
+            // selectedEditDevice = null;
+            // currentOverlappingDevices = [];
+        }
+
+        // 确认设备选择
+        function confirmDeviceSelection() {
+            if (!selectedEditDevice || !selectedEditDevice.deviceId) {
+                alert('请选择一个设备');
+                return;
+            }
+            
+            closeDeviceSelectModal();
+            isDraggingFromGroup = true;
+            
+            // 在视觉上分离选中的设备
+            splitDeviceFromGroup(selectedEditDevice);
+            
+            console.log('选中编辑设备:', selectedEditDevice.deviceId);
+        }
+
+        // 在视觉上将设备从重合组中分离（取出设备紧贴原位置）
+        function splitDeviceFromGroup(device) {
+            if (!device || !device.deviceId) {
+                console.error('splitDeviceFromGroup: device is null or has no deviceId');
+                return;
+            }
+            
+            var markerKey = device.deviceId;
+            var originalLng = parseFloat(device.lng);
+            var originalLat = parseFloat(device.lat);
+            
+            // 选中设备紧贴原位置（向右偏移约10米，刚好紧贴但不重叠）
+            var offsetLng = 0.0001; // 约10米
+            var offsetLat = 0;
+            var newLng = originalLng + offsetLng;
+            var newLat = originalLat + offsetLat;
+            
+            // 获取重合设备列表
+            var overlappingDevices = currentOverlappingDevices || device._overlappingDevices;
+            if (!overlappingDevices || overlappingDevices.length === 0) return;
+            
+            // 从重合组中移除选中的设备
+            var remainingDevices = overlappingDevices.filter(function(dev) {
+                return dev && dev.deviceId !== device.deviceId;
+            });
+            
+            // 更新 currentOverlappingDevices 为剩余设备
+            currentOverlappingDevices = remainingDevices;
+            
+            // 找到第一个设备的标记（显示数量的那个标记）
+            var firstDeviceId = null;
+            if (overlappingDevices.length > 0 && overlappingDevices[0]) {
+                firstDeviceId = overlappingDevices[0].deviceId;
+            }
+            
+            // 关键：先清除原来的重合标记（显示数字的那个）
+            if (firstDeviceId && markers[firstDeviceId]) {
+                markers[firstDeviceId].setMap(null);
+                delete markers[firstDeviceId];
+            }
+            
+            // 为选中的设备创建独立标记（偏移位置）
+            // 清除选中设备的重合标记，使其显示为单个设备样式
+            device._overlappingDevices = null;
+            createDeviceMarker(device);
+            if (markers[markerKey]) {
+                markers[markerKey].setPosition([newLng, newLat]);
+                var content = markers[markerKey].getContent();
+                if (content) {
+                    content.style.border = '4px solid #ff6b6b';
+                    content.style.boxShadow = '0 4px 15px rgba(255,107,107,0.6)';
+                    content.style.zIndex = '10002';
+                    content.innerHTML = device.deviceName ? device.deviceName.substring(0, 2) : '●';
+                }
+                markers[markerKey].setTop(true);
+                // 标记为已分离的设备
+                device._isSplitFromGroup = true;
+            }
+            
+            // 处理剩余的重合设备 - 保持重合状态（只创建一个标记显示数量）
+            if (remainingDevices.length === 1) {
+                // 只剩一个设备，恢复单个设备样式
+                var lastDevice = remainingDevices[0];
+                if (lastDevice) {
+                    lastDevice._overlappingDevices = null;
+                    createDeviceMarker(lastDevice);
+                    if (markers[lastDevice.deviceId]) {
+                        markers[lastDevice.deviceId].setPosition([originalLng, originalLat]);
+                    }
+                }
+            } else if (remainingDevices.length > 1) {
+                // 还有多个设备，保持重合状态，只创建一个标记（第一个设备）
+                var firstRemainingDevice = remainingDevices[0];
+                if (firstRemainingDevice) {
+                    firstRemainingDevice._overlappingDevices = remainingDevices;
+                    createDeviceMarker(firstRemainingDevice);
+                    if (markers[firstRemainingDevice.deviceId]) {
+                        markers[firstRemainingDevice.deviceId].setPosition([originalLng, originalLat]);
+                    }
+                }
+            }
+        }
+
+        // 高亮显示选中的设备
+        function highlightSelectedDevice(device) {
+            // 重置所有标记样式
+            for (var key in markers) {
+                var marker = markers[key];
+                if (marker) {
+                    var content = marker.getContent();
+                    if (content) {
+                        content.style.border = '3px solid #fff';
+                        content.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+                    }
+                }
+            }
+            
+            // 高亮当前选中的设备标记
+            var markerKey = device.deviceId;
+            if (markers[markerKey]) {
+                var content = markers[markerKey].getContent();
+                if (content) {
+                    content.style.border = '4px solid #ff6b6b';
+                    content.style.boxShadow = '0 4px 15px rgba(255,107,107,0.6)';
+                }
+            }
+        }
+
+        // 更新分离设备的标记显示
+        function updateMarkerForSplitDevice(device, newLng, newLat) {
+            var markerKey = device.deviceId;
+            
+            // 如果标记存在，更新位置
+            if (markers[markerKey]) {
+                markers[markerKey].setPosition([newLng, newLat]);
+            }
+            
+            // 更新设备数据
+            device.lng = newLng;
+            device.lat = newLat;
+            
+            // 清除选中状态
+            selectedEditDevice = null;
+            isDraggingFromGroup = false;
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initMap();
+
+            // 初始化Qt WebChannel
+            if (typeof qt !== 'undefined') {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    gpsEditHandler = channel.objects.gpsEditHandler;
+                    console.log('GPS编辑处理器已连接');
+                });
+            }
+        });
+    </script>
+</body>
+</html>
