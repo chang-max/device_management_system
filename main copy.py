@@ -59,219 +59,11 @@ from log_save import Logger
 _log = Logger(True).logger
 
 from generalfunction import (get_area_dict, is_in_item, get_device_data_count, get_real_time_online_flg,
-                               get_col_apply, get_device_Ec_value, list_before_deadline,
+                               get_col_apply, add_device_default_row, get_device_Ec_value, list_before_deadline,
                                get_err_config, get_time, get_parsed_all_data, get_total_power_within_minutes)
-from MyWidget import CheckBoxDelegate, OptimizedButtonDelegate, BrokenLineCanvas, PieCanvas, Power24hCanvas, AreaTreeView
+from MyWidget import ConfigurableSortProxy, CheckBoxDelegate, OptimizedButtonDelegate, BrokenLineCanvas, PieCanvas, Power24hCanvas, AreaTreeView
 from chart_area_filter import ChartAreaFilter
 
-from PyQt6.QtCore import QAbstractTableModel, Qt, QVariant, QModelIndex
-from PyQt6.QtGui import QColor
-
-# ==========================================
-# 1. 新增的高性能、全功能虚拟 TableView 数据模型
-# ==========================================
-class FastDeviceTableModel(QAbstractTableModel):
-    """
-    全功能、高并发虚拟表格数据模型
-    1. 相比 QStandardItemModel，内存消耗降低 90%
-    2. 原生支持基于 Timsort 算法的极速排序
-    3. 支持基于集合的 O(1) 复杂度内存级极速过滤
-    4. 深度兼容勾选框交互（CheckStateRole）
-    """
-    def __init__(self, headers, float_cols=None, datetime_cols=None):
-        super().__init__()
-        self.headers = headers
-        self.float_cols = float_cols or []
-        self.datetime_cols = datetime_cols or []
-
-        self.all_devices = []      # 所有设备的底层字典存储引用 (共享给 ClientDataManager)
-        self.display_devices = []  # 当前经过筛选/排序后实际展示的设备列表
-
-        self.current_sort_col = -1
-        self.current_sort_order = Qt.SortOrder.AscendingOrder
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self.display_devices)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.headers)
-
-    def headerData(self, section, orientation, role):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self.headers[section]
-        return QVariant()
-
-    def data(self, index, role):
-        if not index.isValid():
-            return QVariant()
-
-        row, col = index.row(), index.column()
-        dev = self.display_devices[row]
-        col_name = self.headers[col]
-
-        # 1. 基础文本显示
-        if role == Qt.ItemDataRole.DisplayRole:
-            val = dev.get(col_name, "")
-            return str(val) if val is not None else ""
-
-        # 2. 状态前景颜色控制
-        if role == Qt.ItemDataRole.ForegroundRole and col_name == "在线状态":
-            return QColor("green") if dev.get("在线状态") == "在线" else QColor("red")
-
-        # 3. 居中对齐
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            return Qt.AlignmentFlag.AlignCenter
-
-        # 4. 完美兼容复选框状态显示
-        if role == Qt.ItemDataRole.CheckStateRole and col_name in ["应用勾选", "管理勾选"]:
-            return dev.get(f"{col_name}_checked", Qt.CheckState.Unchecked)
-
-        # 5. 支持原有业务调用需要的 UserRole
-        if role == Qt.ItemDataRole.UserRole:
-            if col_name in ["应用勾选", "管理勾选"]:
-                return dev.get(f"{col_name}_checked", Qt.CheckState.Unchecked)
-            return dev.get(col_name)
-
-        return QVariant()
-
-    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
-        """支持复选框状态的修改同步"""
-        if index.isValid() and role == Qt.ItemDataRole.CheckStateRole:
-            row, col = index.row(), index.column()
-            col_name = self.headers[col]
-            if col_name in ["应用勾选", "管理勾选"]:
-                self.display_devices[row][f"{col_name}_checked"] = value
-                self.dataChanged.emit(index, index, [role])
-                return True
-        return False
-
-    def flags(self, index):
-        """设置复选框列为可交互状态"""
-        flags = super().flags(index)
-        col_name = self.headers[index.column()]
-        if col_name in ["应用勾选", "管理勾选"]:
-            flags |= Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
-        return flags
-
-    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
-        """内存级 Timsort 极速排序：替代低效的 ConfigurableSortProxy"""
-        self.layoutAboutToBeChanged.emit()
-        self.current_sort_col = column
-        self.current_sort_order = order
-
-        col_name = self.headers[column]
-        is_reverse = (order == Qt.SortOrder.DescendingOrder)
-
-        def sort_key(dev_dict):
-            val = dev_dict.get(col_name)
-            if col_name in self.float_cols:
-                try:
-                    return float(val) if val not in ["", "-", None] else -float('inf')
-                except:
-                    return -float('inf')
-            elif col_name in self.datetime_cols:
-                return str(val) if val else "1970-01-01 00:00:00"
-            else:
-                return str(val) if val is not None else ""
-
-        self.display_devices.sort(key=sort_key, reverse=is_reverse)
-        self.layoutChanged.emit()
-
-    def filter_data(self, keyword="", area_devices_set=None):
-        """集合级内存极速过滤，替代 proxy.setFilterFixedString"""
-        self.beginResetModel()
-
-        # 1. 区域初筛 (基于集合进行极其高效的 O(1) 初筛)
-        if area_devices_set is not None:
-            base_list = [d for d in self.all_devices if d.get("设备号") in area_devices_set]
-        else:
-            base_list = self.all_devices
-
-        # 2. 关键字文本二次模糊匹配
-        if keyword:
-            keyword = str(keyword).lower()
-            self.display_devices = [
-                d for d in base_list
-                if keyword in str(d.get("设备号", "")).lower()
-                or keyword in str(d.get("设备名称", "")).lower()
-            ]
-        else:
-            self.display_devices = base_list.copy()
-
-        # 3. 恢复排序状态
-        if self.current_sort_col >= 0:
-            self.sort(self.current_sort_col, self.current_sort_order)
-
-        self.endResetModel()
-
-    def update_single_device(self, dev_id, updates_dict):
-        """高频局部单行刷新：避免整表重绘造成的卡顿"""
-        target_row = -1
-        # 寻找设备在 display_devices 中对应的当前行索引
-        for i, d in enumerate(self.display_devices):
-            if d.get("设备号") == dev_id:
-                target_row = i
-                break
-
-        # 修改全局底层字典（因 display_devices 共享引用，两端自动同步）
-        for d in self.all_devices:
-            if d.get("设备号") == dev_id:
-                d.update(updates_dict)
-                break
-
-        # 仅仅通知表格局部重绘改变的那一行，释放 CPU
-        if target_row >= 0:
-            idx_start = self.index(target_row, 0)
-            idx_end = self.index(target_row, self.columnCount() - 1)
-            self.dataChanged.emit(idx_start, idx_end)
-
-    def removeRow(self, row, parent=QModelIndex()):
-        """安全移除单行设备映射"""
-        self.beginRemoveRows(parent, row, row)
-        dev_id = self.display_devices[row].get("设备号")
-        del self.display_devices[row]
-        # 同步移出全量数据列表
-        self.all_devices = [d for d in self.all_devices if d.get("设备号") != dev_id]
-        self.endRemoveRows()
-        return True
-
-    def update_data(self, new_data):
-        """兼容旧接口：全量更新数据"""
-        self.beginResetModel()
-        self.display_devices = new_data
-        self.endResetModel()
-
-# ==========================================
-# 2. 新增的极速 O(1) 复杂度内存倒排索引管理器
-# ==========================================
-class ClientDataManager:
-    """倒排索引区域/设备数据管理器，将区域查询耗时降为 0 毫秒"""
-    def __init__(self):
-        self.all_devices = []  # 数据模型关联的底层 list[dict]
-        self.area_index = {}   # 字典结构: "区域1/区域2/区域3" -> [设备集合]
-
-    def load_data(self, dict_list):
-        self.all_devices.clear()
-        self.all_devices.extend(dict_list)
-        self._build_index()
-
-    def _build_index(self):
-        """建立区域倒排索引"""
-        self.area_index.clear()
-        self.area_index["ALL"] = self.all_devices
-        for dev in self.all_devices:
-            p1 = dev.get('区域1')
-            p2 = f"{dev.get('区域1')}/{dev.get('区域2')}" if dev.get('区域2') else None
-            p3 = f"{dev.get('区域1')}/{dev.get('区域2')}/{dev.get('区域3')}" if dev.get('区域3') else None
-
-            for path in filter(None, [p1, p2, p3]):
-                if path not in self.area_index:
-                    self.area_index[path] = []
-                self.area_index[path].append(dev)
-
-    def search(self, area_path):
-        """秒级查询指定区域路径下的所有设备集合"""
-        return self.area_index.get(area_path or "ALL", [])
 
 class DatabaseConnectionManager:
     """数据库连接管理器 - 处理连接失败、弹窗报错、自动重连"""
@@ -644,34 +436,51 @@ class AreaImageLabel(QLabel):
         device_id = device.get('id', '')
         if not device_id:
             return 'offline'
-
+        
         # 检查是否有device_model和device_cols_index
         if not hasattr(self, 'device_model') or not hasattr(self, 'device_cols_index'):
             # 回退到使用device字典中的is_online字段
             is_online = device.get('is_online', False)
             return 'online_off' if is_online else 'offline'
-
-        # 在新的模型结构中查找设备
-        for dev in self.device_model.all_devices:
-            if dev.get("设备号") == device_id:
+        
+        # 在device_model中查找设备
+        device_id_col = self.device_cols_index.get("设备号", -1)
+        online_col = self.device_cols_index.get("在线状态", -1)
+        
+        if device_id_col < 0:
+            return 'offline'
+        
+        # 遍历device_model查找设备
+        for row in range(self.device_model.rowCount()):
+            item = self.device_model.item(row, device_id_col)
+            if item and item.text() == device_id:
                 # 找到设备，检查在线状态
-                is_online = dev.get("在线状态") == "在线"
-
+                is_online = False
+                if online_col >= 0:
+                    online_item = self.device_model.item(row, online_col)
+                    if online_item:
+                        is_online = online_item.text() == "在线"
+                
                 if not is_online:
                     return 'offline'
-
+                
                 # 在线状态下，检查调光值
                 dimming_value = 0
-                try:
-                    val = dev.get("调光值", "-")
-                    if val and val != '-':
-                        dimming_value = int(float(val))
-                except (ValueError, TypeError):
-                    pass
-
+                # 尝试获取调光值（支持多种可能的字段名）
+                col_idx = self.device_cols_index.get("调光值", -1)
+                if col_idx >= 0:
+                    try:
+                        val_item = self.device_model.item(row, col_idx)
+                        if val_item:
+                            val = val_item.text()
+                            if val and val != '-':
+                                dimming_value = int(float(val))
+                    except (ValueError, TypeError):
+                        continue
+                
                 # 调光值 > 0 认为开灯，= 0 认为关灯
                 return 'online_on' if dimming_value > 0 else 'online_off'
-
+        
         # 未找到设备，使用device字典中的is_online
         is_online = device.get('is_online', False)
         return 'online_off' if is_online else 'offline'
@@ -1968,7 +1777,7 @@ class AreaMapTab(QWidget):
     def refresh_devices(self):
         """刷新设备显示 - 根据筛选的区域过滤设备"""
         devices = []
-
+        
         # 获取所有筛选区域的名称（包括子区域）
         filtered_area_names = set()
         def collect_area_names(area_list):
@@ -1978,22 +1787,29 @@ class AreaMapTab(QWidget):
                     filtered_area_names.add(area_name)
                 # 递归收集子区域
                 collect_area_names(area.get('children', []))
-
+        
         collect_area_names(self.filtered_areas)
-
+        
         _log.debug(f"refresh_devices: 筛选区域: {filtered_area_names}")
         _log.debug(f"refresh_devices: 一级区域: {self.level1_area}")
-
-        # 遍历所有设备 (使用新的模型数据结构)
-        for dev in self.device_model.all_devices:
-            dev_area1 = dev.get("区域1", "")
-            dev_area2 = dev.get("区域2", "")
-            dev_area3 = dev.get("区域3", "")
-
+        
+        # 遍历所有设备
+        for row in range(self.device_model.rowCount()):
+            area1_item = self.device_model.item(row, self.device_cols_index.get("区域1", -1))
+            area2_item = self.device_model.item(row, self.device_cols_index.get("区域2", -1))
+            area3_item = self.device_model.item(row, self.device_cols_index.get("区域3", -1))
+            
+            if not area1_item:
+                continue
+            
+            dev_area1 = area1_item.text() if area1_item else ""
+            dev_area2 = area2_item.text() if area2_item else ""
+            dev_area3 = area3_item.text() if area3_item else ""
+            
             # 首先检查是否属于当前一级区域
             if dev_area1 != self.level1_area:
                 continue
-
+            
             # 检查设备是否属于筛选的区域
             # 如果筛选了特定区域（不是全部），则检查设备是否在筛选区域内
             is_in_filtered_area = False
@@ -2006,26 +1822,30 @@ class AreaMapTab(QWidget):
                     is_in_filtered_area = True
                 elif dev_area3 in filtered_area_names:
                     is_in_filtered_area = True
-
+            
             if not is_in_filtered_area:
                 continue
-
-            device_id = dev.get("设备号", "")
-
+            
+            device_id_item = self.device_model.item(row, self.device_cols_index.get("设备号", -1))
+            device_name_item = self.device_model.item(row, self.device_cols_index.get("设备名称", -1))
+            online_item = self.device_model.item(row, self.device_cols_index.get("在线状态", -1))
+            
+            device_id = device_id_item.text() if device_id_item else ""
+            
             # 从数据库获取设备位置
             x, y = self._get_device_position_in_area(None, device_id)
-
+            
             if x is not None and y is not None:
                 devices.append({
                     'id': device_id,
-                    'name': dev.get("设备名称", device_id),
+                    'name': device_name_item.text() if device_name_item else device_id,
                     'x': x,
                     'y': y,
-                    'is_online': dev.get("在线状态") == "在线"
+                    'is_online': online_item.text() == "在线" if online_item else False
                 })
-
+        
         _log.debug(f"refresh_devices: 共找到 {len(devices)} 个设备")
-
+        
         # 去重
         seen_ids = set()
         unique_devices = []
@@ -2033,7 +1853,7 @@ class AreaMapTab(QWidget):
             if dev['id'] not in seen_ids:
                 seen_ids.add(dev['id'])
                 unique_devices.append(dev)
-
+                
         self.image_label.set_devices(unique_devices)
         
     def start_auto_refresh(self):
@@ -2186,31 +2006,42 @@ class Platform(QMainWindow, Ui_MainWindow):
         self.UI_area_treeView.treeview_init(self.area_list)
         _log.debug(f"==========区域、区域搜索、区域划分树初始化完成=============")
 
-        # === 替换为高性能模型初始化 ===
-        self.data_manager = ClientDataManager()
-
-        # 1. 组装空设备字典，直接拉取装载
+        # 统一设备表格模型
         self.apply_col_config, self.apply_key_cols, self.apply_FLOAT_cols, self.apply_DATETIME_cols = get_col_apply(self.db_pool)
+        
         self.history_ui = History(self.apply_key_cols, self.db_pool)
-
-        self.device_cols_name = ["应用勾选", "管理勾选", "设备号", "设备名称", "区域1", "区域2", "区域3", "相对X", "相对Y", "添加日期", "工作计划", "编辑", "删除", "在线状态"]
+        
+        self.device_cols_name = ["应用勾选", "管理勾选", "设备号", "设备名称", "区域1", "区域2", "区域3", "相对X", "相对Y", "添加日期", "工作计划", "编辑", "删除"]
+        
+        self.device_cols_name.append("在线状态")
         self.device_cols_name.extend(list(self.apply_col_config.keys()))
         self.device_cols_name.append("历史数据")
-
+        
         self.device_cols_index = {name: i for i, name in enumerate(self.device_cols_name)}
+        
         self.dm_hidden_cols = ["应用勾选"] + list(self.apply_col_config.keys()) + ["历史数据", "工作计划"]
         self.apply_hidden_cols = ["管理勾选", "相对X", "相对Y",  "添加日期", "编辑", "删除", "区域1", "区域2", "区域3", "工作计划"]
-
-        # 2. 初始化 FastDeviceTableModel，直接绑定
+        
+        self.device_model = QStandardItemModel(0, len(self.device_cols_name))
+        self.device_model.setHorizontalHeaderLabels(self.device_cols_name)
+        
+        self._load_device_data()
+        
         FLOAT_cols = ["设备号"] + self.apply_FLOAT_cols
         DATETIME_cols = ["添加日期"] + self.apply_DATETIME_cols
-        self.device_model = FastDeviceTableModel(self.device_cols_name, FLOAT_cols, DATETIME_cols)
-
-        # 3. 异步拉取并索引设备
-        self._load_device_data()
-
-        # 4. 视图直接绑定模型，去除原有的 Proxy 代理层以加快运行速率
-        self.UI_dm_device_tableView.setModel(self.device_model)
+        
+        self.dm_filter_proxy = ConfigurableSortProxy(FLOAT_cols, DATETIME_cols)
+        self.dm_filter_proxy.setSourceModel(self.device_model)
+        self.dm_filter_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.dm_filter_proxy.setDynamicSortFilter(True)
+        
+        self.apply_filter_proxy = ConfigurableSortProxy(FLOAT_cols, DATETIME_cols)
+        self.apply_filter_proxy.setSourceModel(self.device_model)
+        self.apply_filter_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.apply_filter_proxy.setDynamicSortFilter(True)
+        
+        # 设备管理视图配置
+        self.UI_dm_device_tableView.setModel(self.dm_filter_proxy)
         for col_name in self.dm_hidden_cols:
             if col_name in self.device_cols_index:
                 self.UI_dm_device_tableView.hideColumn(self.device_cols_index[col_name])
@@ -2227,11 +2058,11 @@ class Platform(QMainWindow, Ui_MainWindow):
         self.UI_dm_device_tableView.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.UI_dm_device_tableView.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.UI_dm_device_tableView.horizontalHeader().sectionClicked.connect(
-            lambda column: self.device_model.sort(column, self.UI_dm_device_tableView.horizontalHeader().sortIndicatorOrder())
+            lambda column: self._handle_sort_click(self.UI_dm_device_tableView, self.dm_filter_proxy, column)
         )
-
+        
         # 应用视图配置
-        self.UI_apply_tableview.setModel(self.device_model)
+        self.UI_apply_tableview.setModel(self.apply_filter_proxy)
         for col_name in self.apply_hidden_cols:
             if col_name in self.device_cols_index:
                 self.UI_apply_tableview.hideColumn(self.device_cols_index[col_name])
@@ -2250,7 +2081,7 @@ class Platform(QMainWindow, Ui_MainWindow):
         self.UI_apply_tableview.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.UI_apply_tableview.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.UI_apply_tableview.horizontalHeader().sectionClicked.connect(
-            lambda column: self.device_model.sort(column, self.UI_apply_tableview.horizontalHeader().sortIndicatorOrder())
+            lambda column: self._handle_sort_click(self.UI_apply_tableview, self.apply_filter_proxy, column)
         )
 
         # MQTT初始化
@@ -2472,7 +2303,7 @@ class Platform(QMainWindow, Ui_MainWindow):
             self.charts_web_view.page().runJavaScript(js_code)
 
     def _load_device_data(self):
-        """高性能数据装载：从数据库直接构造 dict 列表，写入 model 并构建倒排索引"""
+        """加载设备数据到统一模型"""
         usr = self.login_dialog.usr_passwd.split(' ')[0]
         order = "SELECT * FROM device_info WHERE 账户 = %s"
         try:
@@ -2480,41 +2311,10 @@ class Platform(QMainWindow, Ui_MainWindow):
                 with conn.cursor() as cursor:
                     cursor.execute(order, (usr,))
                     devices = cursor.fetchall()
-
-                    device_dict_list = []
-                    for d in devices:
-                        add_datetime = d.get("日期")
-                        if isinstance(add_datetime, datetime):
-                            add_time_str = add_datetime.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            add_time_str = str(add_datetime) if add_datetime else ""
-
-                        dev_map = {
-                            "应用勾选": "", "应用勾选_checked": Qt.CheckState.Unchecked,
-                            "管理勾选": "", "管理勾选_checked": Qt.CheckState.Unchecked,
-                            "设备号": d.get("设备号", ""),
-                            "设备名称": d.get("设备名称", ""),
-                            "区域1": d.get("区域1", "") or "",
-                            "区域2": d.get("区域2", "") or "",
-                            "区域3": d.get("区域3", "") or "",
-                            "相对X": str(d.get("相对X", "0")),
-                            "相对Y": str(d.get("相对Y", "0")),
-                            "添加日期": add_time_str,
-                            "工作计划": d.get("工作计划", "{}"),
-                            "在线状态": "离线"
-                        }
-                        # 合并附加列
-                        for col_name in self.apply_col_config.keys():
-                            dev_map[col_name] = "-"
-                        device_dict_list.append(dev_map)
-
-                    # 加载到倒排索引和模型中
-                    self.data_manager.load_data(device_dict_list)
-                    self.device_model.all_devices = self.data_manager.all_devices
-                    self.device_model.filter_data() # 初始化显示全量
-
+                    for device in devices:
+                        add_device_default_row(self.device_model, self.apply_col_config, device)
         except Exception as e:
-            _log.error(f"高性能加载设备数据失败: {e}")
+            _log.error(f"加载设备数据失败: {e}")
             traceback.print_exc()
 
     def init_db_pool(self):
@@ -2711,32 +2511,35 @@ class Platform(QMainWindow, Ui_MainWindow):
         try:
             if not updated_devices:
                 return
-
+            
             # 保存到数据库
             saved_count = 0
             for device_data in updated_devices:
                 device_id = device_data.get('id', '')
                 new_x = device_data.get('x', 0)
                 new_y = device_data.get('y', 0)
-
-                if device_id:
+                row = device_data.get('row', -1)
+                
+                if device_id and row >= 0:
                     # 更新数据库
                     self._save_device_position_to_db(device_id, new_x, new_y)
-
-                    # 更新模型数据
-                    self.device_model.update_single_device(device_id, {
-                        "相对X": str(new_x),
-                        "相对Y": str(new_y)
-                    })
-
+                    
+                    # 更新界面模型
+                    x_col = self.device_cols_index.get("相对X", -1)
+                    y_col = self.device_cols_index.get("相对Y", -1)
+                    if x_col >= 0:
+                        self.device_model.item(row, x_col).setText(str(new_x))
+                    if y_col >= 0:
+                        self.device_model.item(row, y_col).setText(str(new_y))
+                    
                     saved_count += 1
-
+            
             # 刷新区域地图显示
             self.refresh_area_map_display()
-
+            
             self.show_message(f"成功更新 {saved_count} 个设备的位置", "success")
             _log.info(f"设备位置已更新: {saved_count} 个设备")
-
+            
         except Exception as e:
             _log.error(f"处理设备坐标更新失败: {e}")
             import traceback
@@ -2864,21 +2667,26 @@ class Platform(QMainWindow, Ui_MainWindow):
             return
         
         updated_count = 0
-
+        
         # 遍历所有设备
-        for dev in self.device_model.all_devices:
-            device_id = dev.get("设备号")
-            dev_area1 = dev.get("区域1", "")
-            dev_area2 = dev.get("区域2", "")
-            dev_area3 = dev.get("区域3", "")
-
-            if not device_id:
+        for row in range(self.device_model.rowCount()):
+            device_id_item = self.device_model.item(row, device_id_col)
+            area1_item = self.device_model.item(row, area1_col)
+            area2_item = self.device_model.item(row, area2_col) if area2_col >= 0 else None
+            area3_item = self.device_model.item(row, area3_col) if area3_col >= 0 else None
+            
+            if not device_id_item or not area1_item:
                 continue
-
+            
+            device_id = device_id_item.text()
+            dev_area1 = area1_item.text() if area1_item else ""
+            dev_area2 = area2_item.text() if area2_item else ""
+            dev_area3 = area3_item.text() if area3_item else ""
+            
             needs_update = False
             new_area2 = dev_area2
             new_area3 = dev_area3
-
+            
             # 根据删除的区域级别判断需要清空哪些字段
             if deleted_level == 2:  # 删除一级区域
                 if dev_area1 in deleted_areas:
@@ -2897,12 +2705,14 @@ class Platform(QMainWindow, Ui_MainWindow):
                     # 设备属于被删除的三级区域，只清空区域3
                     needs_update = True
                     new_area3 = ""
-
+            
             if needs_update:
                 # 更新数据模型
-                dev["区域2"] = new_area2
-                dev["区域3"] = new_area3
-
+                if area2_item:
+                    area2_item.setText(new_area2)
+                if area3_item:
+                    area3_item.setText(new_area3)
+                
                 # 同步更新数据库
                 self._update_device_area_in_db(device_id, new_area2, new_area3)
                 updated_count += 1
@@ -2934,14 +2744,19 @@ class Platform(QMainWindow, Ui_MainWindow):
         updated_count = 0
 
         # 遍历所有设备
-        for dev in self.device_model.all_devices:
-            device_id = dev.get("设备号")
-            dev_area1 = dev.get("区域1", "")
-            dev_area2 = dev.get("区域2", "")
-            dev_area3 = dev.get("区域3", "")
+        for row in range(self.device_model.rowCount()):
+            device_id_item = self.device_model.item(row, device_id_col)
+            area1_item = self.device_model.item(row, area1_col)
+            area2_item = self.device_model.item(row, area2_col) if area2_col >= 0 else None
+            area3_item = self.device_model.item(row, area3_col) if area3_col >= 0 else None
 
-            if not device_id:
+            if not device_id_item or not area1_item:
                 continue
+
+            device_id = device_id_item.text()
+            dev_area1 = area1_item.text() if area1_item else ""
+            dev_area2 = area2_item.text() if area2_item else ""
+            dev_area3 = area3_item.text() if area3_item else ""
 
             needs_update = False
             new_area1 = dev_area1
@@ -2964,9 +2779,11 @@ class Platform(QMainWindow, Ui_MainWindow):
 
             if needs_update:
                 # 更新数据模型
-                dev["区域1"] = new_area1
-                dev["区域2"] = new_area2
-                dev["区域3"] = new_area3
+                area1_item.setText(new_area1)
+                if area2_item:
+                    area2_item.setText(new_area2)
+                if area3_item:
+                    area3_item.setText(new_area3)
 
                 # 同步更新数据库
                 self._update_device_area_in_db_rename(device_id, new_area1, new_area2, new_area3)
@@ -3302,8 +3119,7 @@ class Platform(QMainWindow, Ui_MainWindow):
                     rowcount = cursor.rowcount
         except Exception as e:
             if "1062" in str(e):
-                # 检查设备是否已存在于当前模型中
-                in_flg = any(d.get("设备号") == device_id for d in self.device_model.all_devices)
+                in_flg = is_in_item(self.device_model, self.device_cols_index["设备号"], device_id)
                 if in_flg:
                     _log.error(f"添加单个设备：{device_name}, {device_id}, {area_1}, {area_2}, {area_3} 失败: 设备号已存在其他账户")
                 else:
@@ -3314,52 +3130,57 @@ class Platform(QMainWindow, Ui_MainWindow):
         else:
             _log.debug(f"添加单个设备rowcount：{rowcount}")
             if rowcount == 1:
-                # 创建新设备字典
-                dev_map = {
-                    "应用勾选": "", "应用勾选_checked": Qt.CheckState.Unchecked,
-                    "管理勾选": "", "管理勾选_checked": Qt.CheckState.Unchecked,
+                device = {
                     "设备号": device_id,
                     "设备名称": device_name,
-                    "区域1": area_1 or "",
-                    "区域2": area_2 or "",
-                    "区域3": area_3 or "",
-                    "相对X": str(x),
-                    "相对Y": str(y),
-                    "添加日期": add_datetime,
-                    "工作计划": "{}",
-                    "在线状态": "离线"
+                    "区域1": area_1,
+                    "区域2": area_2,
+                    "区域3": area_3,
+                    "相对X": x,
+                    "相对Y": y,
+                    "日期": add_datetime,
+                    "工作计划": "{}"
                 }
-                # 合并附加列
-                for col_name in self.apply_col_config.keys():
-                    dev_map[col_name] = "-"
-
-                # 添加到模型
-                self.device_model.all_devices.append(dev_map)
-                self.data_manager.load_data(self.device_model.all_devices)
-                self.device_model.filter_data()
-
+                add_device_default_row(self.device_model, self.apply_col_config, device)
                 _log.debug(f"添加单个设备：{device_name}, {device_id}, {current_account}, {area_1}, {area_2}, {area_3}, {x}, {y}, {add_datetime} 成功")
                 self._clear_online_rate_cache()
                 self._clear_ec_cache()
                 self._clear_devices_cache()  # 清除设备缓存
                 self.refresh_area_map_display()
             elif rowcount == 2:
-                # 更新现有设备
-                updates = {
-                    "设备名称": device_name,
-                    "区域1": area_1 or "",
-                    "区域2": area_2 or "",
-                    "区域3": area_3 or "",
-                    "相对X": str(x),
-                    "相对Y": str(y)
-                }
-                self.device_model.update_single_device(device_id, updates)
-
-                # 重新构建索引
-                self.data_manager.load_data(self.device_model.all_devices)
-
-                _log.debug(f"更新单个设备：{device_name}, {device_id}, {current_account}, {area_1}, {area_2}, {area_3}, {x}, {y}, {add_datetime} 成功")
-                self.refresh_area_map_display()
+                if row != -1:
+                    col_name = ["设备名称", "区域1", "区域2", "区域3", "相对X", "相对Y"]
+                    datas = [device_name, area_1, area_2, area_3, x, y]
+                    for col in range(len(col_name)):
+                        item = self.device_model.item(row, self.device_cols_index[col_name[col]])
+                        if item:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                            item.setText(str(datas[col]))
+                            item.setData(datas[col], Qt.ItemDataRole.DisplayRole)
+                    self.device_model.dataChanged.emit(
+                        self.device_model.index(row, 0),
+                        self.device_model.index(row, self.device_model.columnCount() - 1)
+                    )
+                    _log.debug(f"更新单个设备：{device_name}, {device_id}, {current_account}, {area_1}, {area_2}, {area_3}, {x}, {y}, {add_datetime} 成功")
+                    self.refresh_area_map_display()
+                elif row == -1:
+                    device = {
+                        "设备号": device_id,
+                        "设备名称": device_name,
+                        "区域1": area_1,
+                        "区域2": area_2,
+                        "区域3": area_3,
+                        "相对X": x,
+                        "相对Y": y,
+                        "日期": add_datetime,
+                        "工作计划": "{}"
+                    }
+                    add_device_default_row(self.device_model, self.apply_col_config, device)
+                    _log.debug(f"添加单个设备：{device_name}, {device_id}, {area_1}, {area_2}, {area_3}, {x}, {y} 成功")
+                    self._clear_online_rate_cache()
+                    self._clear_ec_cache()
+                    self._clear_devices_cache()  # 清除设备缓存
+                    self.refresh_area_map_display()
             else:
                 with self.db_pool.connection() as conn:
                     with conn.cursor() as cursor:
@@ -3431,22 +3252,19 @@ class Platform(QMainWindow, Ui_MainWindow):
     def dm_btn_edit_click(self, index):
         """设备配置表格编辑按钮点击-槽函数"""
         dev_row = index.row()
-        if dev_row >= len(self.device_model.display_devices):
-            return
-        dev = self.device_model.display_devices[dev_row]
-        name = dev.get("设备名称", "")
-        id = dev.get("设备号", "")
-        area1 = dev.get("区域1", "")
-        area2 = dev.get("区域2", "")
-        area3 = dev.get("区域3", "")
-        x = dev.get("相对X", "0")
-        y = dev.get("相对Y", "0")
+        name = self.device_model.item(dev_row, self.device_cols_index["设备名称"]).text()
+        id = self.device_model.item(dev_row, self.device_cols_index["设备号"]).text()
+        area1 = self.device_model.item(dev_row, self.device_cols_index["区域1"]).text()
+        area2 = self.device_model.item(dev_row, self.device_cols_index["区域2"]).text()
+        area3 = self.device_model.item(dev_row, self.device_cols_index["区域3"]).text()
+        x = self.device_model.item(dev_row, self.device_cols_index["相对X"]).text()
+        y = self.device_model.item(dev_row, self.device_cols_index["相对Y"]).text()
 
         default_dev_config = {
-            "设备名称": name,
-            "设备号": id,
-            "区域1": area1,
-            "区域2": area2,
+            "设备名称": name, 
+            "设备号": id, 
+            "区域1": area1, 
+            "区域2": area2, 
             "区域3": area3,
             "相对X": x,
             "相对Y": y,
@@ -3458,18 +3276,16 @@ class Platform(QMainWindow, Ui_MainWindow):
     def dm_btn_delete_click(self, index):
         """设备配置表格删除按钮点击-槽函数"""
         _log.debug(f"设备配置表格删除按钮点击-槽函数：{index}")
-        dev_row = index.row()
-        if dev_row < len(self.device_model.display_devices):
-            dev_id = self.device_model.display_devices[dev_row].get("设备号")
-            if dev_id:
-                self.delete_device([dev_id])
+        dev_id = self.device_model.item(index.row(), self.device_cols_index["设备号"]).text()
+        self.delete_device([dev_id])
     
     def dm_delete_more_click(self):
-        """设备批量删除"""
+        """设备配置表格删除更多按钮点击-槽函数"""
+        rows = self.dm_filter_proxy.selectedRows()
         dev_id_list = []
-        for dev in self.device_model.display_devices:
-            if dev.get("管理勾选_checked") == Qt.CheckState.Checked:
-                dev_id_list.append(dev.get("设备号"))
+        for row in rows:
+            if self.device_model.item(row, self.device_cols_index["管理勾选"]).data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked:
+                dev_id_list.append(self.device_model.item(row, self.device_cols_index["设备号"]).text())
         self.delete_device(dev_id_list)
         
     def _clear_online_rate_cache(self):
@@ -3489,23 +3305,18 @@ class Platform(QMainWindow, Ui_MainWindow):
                         conn.commit()
                         _log.debug(f"删除设备：{device_id_list} 成功")
 
-                        # 从 all_devices 中删除指定设备
-                        self.device_model.all_devices = [
-                            d for d in self.device_model.all_devices
-                            if d.get("设备号") not in device_id_list
-                        ]
-                        # 重新构建索引和刷新显示
-                        self.data_manager.load_data(self.device_model.all_devices)
-                        self.device_model.filter_data()
-
-                        # 取消MQTT订阅
-                        for device_id in device_id_list:
-                            try:
-                                self.client.unsubscribe(f"{device_id}")
-                                _log.debug(f"取消设备：{device_id} 的MQTT订阅")
-                            except Exception as e:
-                                _log.error(f"取消订阅设备：{device_id} 失败：{str(e)}")
-
+                        rows_count = self.device_model.rowCount()
+                        for row in range(rows_count-1, -1, -1):
+                            device_id = self.device_model.item(row, self.device_cols_index["设备号"]).text()
+                            if device_id in device_id_list:
+                                try:
+                                    self.device_model.removeRow(row)
+                                    _log.debug(f"删除设备：{device_id} 成功")
+                                except Exception as e:
+                                    _log.error(f"删除设备：{device_id} 失败：{str(e)}")
+                                else:
+                                    self.client.unsubscribe(f"{device_id}")
+                                    _log.debug(f"取消设备：{device_id} 的MQTT订阅")
                         self._clear_online_rate_cache()
                         self._clear_ec_cache()
                         self._clear_devices_cache()  # 清除设备缓存
@@ -3516,43 +3327,42 @@ class Platform(QMainWindow, Ui_MainWindow):
 
     def apply_btn_history_click(self, index):
         """应用表格历史数据按钮点击-槽函数"""
-        if not index.isValid():
+        source_index = self.apply_filter_proxy.mapToSource(index)
+        if not source_index.isValid():
             return
 
-        row = index.row()
-        if row < len(self.device_model.display_devices):
-            dev = self.device_model.display_devices[row]
-            self.history_ui.table_name = dev.get("设备号", "")
-            self.history_ui.setWindowTitle(f"历史数据-{self.history_ui.table_name}")
-            self.history_ui.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-            self.history_ui.UI_table_data.setRowCount(0)
-            self.history_ui.canvas.axes.clear()
-            self.history_ui.exec()
+        row = source_index.row()
+        self.history_ui.table_name = self.device_model.item(row, self.device_cols_index["设备号"]).text()
+        self.history_ui.setWindowTitle(f"历史数据-{self.history_ui.table_name}")
+        self.history_ui.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.history_ui.UI_table_data.setRowCount(0)
+        self.history_ui.canvas.axes.clear()
+        self.history_ui.exec()
     
     def mqtt_connect(self, connected, first_connect):
         """MQTT连接成功-槽函数"""
         if connected and first_connect:
             _log.debug("MQTT 首次连接成功，订阅所有主题")
-            for dev in self.device_model.all_devices:
-                dev_id = dev.get("设备号")
-                if dev_id and not self.client.subscribe(f"{dev_id}"):
+            for row in range(self.device_model.rowCount()):
+                dev_id = self.device_model.item(row, self.device_cols_index["设备号"]).text()
+                if not self.client.subscribe(f"{dev_id}"):
                     _log.error(f"订阅主题：{dev_id} 失败")
 
 
     def all_nall_check(self):
-        """一键全选或取消全选 (高性能版本)"""
-        is_check = (self.UI_all_nall_btn.text() == "全选")
-        new_state = Qt.CheckState.Checked if is_check else Qt.CheckState.Unchecked
-        self.UI_all_nall_btn.setText("取消全选" if is_check else "全选")
-
-        # 1. 直接更新当前视图中所有显示的底层数据字典状态
-        for dev in self.device_model.display_devices:
-            dev["应用勾选_checked"] = new_state
-
-        # 2. 一次性通知 View 进行重绘，防止高频反复向渲染线程抛事件
-        top_left = self.device_model.index(0, 0)
-        bottom_right = self.device_model.index(self.device_model.rowCount() - 1, self.device_model.columnCount() - 1)
-        self.device_model.dataChanged.emit(top_left, bottom_right)
+        """全选列表或取消全选"""
+        if self.UI_all_nall_btn.text() == "全选":
+            self.UI_all_nall_btn.setText("取消全选")
+            for row in range(self.device_model.rowCount()):
+                item = self.device_model.item(row, self.device_cols_index["应用勾选"])
+                if item:
+                    item.setData(Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
+        else:
+            self.UI_all_nall_btn.setText("全选")
+            for row in range(self.device_model.rowCount()):
+                item = self.device_model.item(row, self.device_cols_index["应用勾选"])
+                if item:
+                    item.setData(Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole)
 
 
     def send(self, type, widget):
@@ -3572,13 +3382,13 @@ class Platform(QMainWindow, Ui_MainWindow):
 
         def send_order_thread(order, name):
             err_text = ""
-            for dev in self.device_model.display_devices:
-                if dev.get("应用勾选_checked") == Qt.CheckState.Checked:
-                    dev_id = dev.get("设备号")
-                    order["SN"] = dev_id
-                    pub_topic = self.topic_config["pub"].replace("#", dev_id)
+            for row in range(self.device_model.rowCount()):
+                if self.device_model.item(row, self.device_cols_index["应用勾选"]).data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked:
+                    dev = self.device_model.item(row, self.device_cols_index["设备号"]).text()
+                    order["SN"] = dev
+                    pub_topic = self.topic_config["pub"].replace("#", dev)
                     if not self.client.publish(pub_topic, str(order).replace("'", "\"")):
-                        err_text += f"{dev_id} {name}指令发送失败\n"
+                        err_text += f"{dev} {name}指令发送失败\n"
             if err_text != "":
                 self.signal_mess_show.emit("end", err_text)
             else:
@@ -4320,13 +4130,13 @@ class Platform(QMainWindow, Ui_MainWindow):
     def _get_devices_info(self):
         """获取设备信息列表（在主线程中调用）"""
         devices_info = []
-        for dev in self.device_model.all_devices:
+        row_count = self.device_model.rowCount()
+        for row in range(row_count):
             try:
-                dev_id = dev.get("设备号", "").strip()
-                add_time = dev.get("添加日期", "").strip()
-                if add_time:
-                    add_datetime = datetime.strptime(add_time, "%Y-%m-%d %H:%M:%S")
-                    devices_info.append((dev_id, add_datetime))
+                dev_id = self.device_model.item(row, self.device_cols_index["设备号"]).text().strip()
+                add_time = self.device_model.item(row, self.device_cols_index["添加日期"]).text().strip()
+                add_datetime = datetime.strptime(add_time, "%Y-%m-%d %H:%M:%S")
+                devices_info.append((dev_id, add_datetime))
             except (RuntimeError, AttributeError, ValueError):
                 continue
         return devices_info
@@ -4594,10 +4404,10 @@ class Platform(QMainWindow, Ui_MainWindow):
 
     def _get_realtime_online_from_model(self, area_path="ALL"):
         """从数据模型获取实时在线率（优化版：支持区域筛选）
-
+        
         Args:
             area_path: 区域路径，格式为 "区域1/区域2/区域3" 或 "ALL" 表示全部区域
-
+        
         Returns:
             tuple: (online_count, offline_count)
         """
@@ -4605,6 +4415,16 @@ class Platform(QMainWindow, Ui_MainWindow):
         offline_count = 0
 
         try:
+            online_status_col = self.device_cols_index.get("在线状态", -1)
+            device_id_col = self.device_cols_index.get("设备号", -1)
+            area1_col = self.device_cols_index.get("区域1", -1)
+            area2_col = self.device_cols_index.get("区域2", -1)
+            area3_col = self.device_cols_index.get("区域3", -1)
+
+            if online_status_col == -1:
+                _log.warning("在线状态列不存在")
+                return 0, 0
+
             # 解析区域路径
             target_area1 = None
             target_area2 = None
@@ -4615,38 +4435,54 @@ class Platform(QMainWindow, Ui_MainWindow):
                 target_area2 = parts[1] if len(parts) > 1 else None
                 target_area3 = parts[2] if len(parts) > 2 else None
 
-            device_count = len(self.device_model.all_devices)
-            _log.info(f"_get_realtime_online_from_model: 区域={area_path}, 设备数={device_count}, target_area1={target_area1}, target_area2={target_area2}, target_area3={target_area3}")
-
+            row_count = self.device_model.rowCount()
+            _log.info(f"_get_realtime_online_from_model: 区域={area_path}, 行数={row_count}, target_area1={target_area1}, target_area2={target_area2}, target_area3={target_area3}")
+            
             matched_count = 0
-            for dev in self.device_model.all_devices:
+            for row in range(row_count):
                 # 区域筛选
                 if area_path != "ALL":
-                    dev_area1 = dev.get("区域1", "")
-                    dev_area2 = dev.get("区域2", "")
-                    dev_area3 = dev.get("区域3", "")
-
+                    # 获取设备的区域值
+                    area1_val = self.device_model.item(row, area1_col).text() if area1_col != -1 and self.device_model.item(row, area1_col) else ""
+                    area2_val = self.device_model.item(row, area2_col).text() if area2_col != -1 and self.device_model.item(row, area2_col) else ""
+                    area3_val = self.device_model.item(row, area3_col).text() if area3_col != -1 and self.device_model.item(row, area3_col) else ""
+                    device_id = self.device_model.item(row, device_id_col).text() if device_id_col != -1 and self.device_model.item(row, device_id_col) else f"行{row}"
+                    
+                    if row < 5:  # 只打印前5行
+                        _log.info(f"  设备{device_id}: 区域1='{area1_val}', 区域2='{area2_val}', 区域3='{area3_val}'")
+                    
                     # 检查区域1
-                    if target_area1 and dev_area1 != target_area1:
-                        continue
-
+                    if target_area1 and area1_col != -1:
+                        area1_item = self.device_model.item(row, area1_col)
+                        if area1_item and area1_item.text() != target_area1:
+                            continue
+                    
                     # 检查区域2
-                    if target_area2 and dev_area2 != target_area2:
-                        continue
-
+                    if target_area2 and area2_col != -1:
+                        area2_item = self.device_model.item(row, area2_col)
+                        if area2_item and area2_item.text() != target_area2:
+                            continue
+                    
                     # 检查区域3
-                    if target_area3 and dev_area3 != target_area3:
-                        continue
-
+                    if target_area3 and area3_col != -1:
+                        area3_item = self.device_model.item(row, area3_col)
+                        if area3_item and area3_item.text() != target_area3:
+                            continue
+                    
                     matched_count += 1
+                    _log.info(f"  设备{device_id} 匹配区域筛选")
 
                 # 获取在线状态
-                status = dev.get("在线状态", "离线")
-                if status == "在线":
-                    online_count += 1
+                status_item = self.device_model.item(row, online_status_col)
+                if status_item:
+                    status_text = status_item.text()
+                    if status_text == "在线":
+                        online_count += 1
+                    else:
+                        offline_count += 1
                 else:
                     offline_count += 1
-
+            
             _log.info(f"_get_realtime_online_from_model: 匹配设备数={matched_count}, 在线={online_count}, 离线={offline_count}")
 
         except Exception as e:
@@ -5185,9 +5021,22 @@ class Platform(QMainWindow, Ui_MainWindow):
     def _update_device_online_status(self, device_id, is_online):
         """更新设备模型中的在线状态列"""
         try:
-            # 使用新的 update_single_device 方法更新状态
-            status_text = "在线" if is_online else "离线"
-            self.device_model.update_single_device(device_id, {"在线状态": status_text})
+            row = self._device_row_cache.get(device_id)
+            if row is None:
+                for r in range(self.device_model.rowCount()):
+                    if self.device_model.item(r, self.device_cols_index["设备号"]).text() == device_id:
+                        row = r
+                        self._device_row_cache[device_id] = row
+                        break
+
+            if row is not None and "在线状态" in self.device_cols_index:
+                item = self.device_model.item(row, self.device_cols_index["在线状态"])
+                if item:
+                    item.setText("在线" if is_online else "离线")
+                    if is_online:
+                        item.setForeground(Qt.GlobalColor.green)
+                    else:
+                        item.setForeground(Qt.GlobalColor.red)
         except Exception as e:
             _log.error(f"更新设备 {device_id} 在线状态失败: {e}")
 
@@ -5218,26 +5067,62 @@ class Platform(QMainWindow, Ui_MainWindow):
             self._update_single_device_ui(dev, result)
 
     def _refresh_device_row_cache(self):
-        """刷新设备行索引缓存 (已废弃，新模型不需要)"""
-        # 新模型使用字典直接查找，不需要行缓存
-        pass
+        """刷新设备行索引缓存"""
+        self._device_row_cache.clear()
+        for row in range(self.device_model.rowCount()):
+            try:
+                dev_id = self.device_model.item(row, self.device_cols_index["设备号"]).text()
+                self._device_row_cache[dev_id] = row
+            except:
+                pass
 
     def _update_single_device_ui(self, dev, result):
-        """兼容 MQTT 高频推流更新"""
+        """更新单个设备的UI"""
         try:
-            # 1. 将包含嵌套字典结构的字段（如 {'功率': {'text': '12.5', 'value': 12.5}}）展平为普通键值
-            flat_updates = {}
-            for col_name, col_data in result.items():
-                if isinstance(col_data, dict):
-                    flat_updates[col_name] = col_data.get('text', '')
-                else:
-                    flat_updates[col_name] = col_data
+            row = self._device_row_cache.get(dev)
+            if row is None:
+                for r in range(self.device_model.rowCount()):
+                    if self.device_model.item(r, self.device_cols_index["设备号"]).text() == dev:
+                        row = r
+                        self._device_row_cache[dev] = row
+                        break
 
-            # 2. 驱动 Model 发起局部行定向更新，保持高并发时界面无任何卡顿和掉帧
-            self.device_model.update_single_device(dev, flat_updates)
+            if row is None:
+                return
+
+            for col_name, col_data in result.items():
+                if col_name not in self.device_cols_index:
+                    continue
+
+                item = self.device_model.item(row, self.device_cols_index[col_name])
+                if not item:
+                    continue
+
+                if isinstance(col_data, dict):
+                    text_value = col_data.get('text', '')
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setText(text_value)
+
+                    col_type = col_data.get('type', '')
+                    if col_type in ('FLOAT', 'INT'):
+                        try:
+                            value = col_data.get('value')
+                            if value is not None:
+                                item.setData(float(value), Qt.ItemDataRole.UserRole)
+                        except (ValueError, TypeError):
+                            pass
+                else:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setText(str(col_data))
+                    if col_name in self.apply_FLOAT_cols:
+                        try:
+                            if col_data and col_data != '-':
+                                item.setData(float(col_data), Qt.ItemDataRole.UserRole)
+                        except (ValueError, TypeError):
+                            pass
 
         except Exception as e:
-            _log.error(f"高并发更新设备 {dev} UI 失败: {e}")
+            _log.error(f"更新设备 {dev} UI失败: {e}")
 
     def update_area_serch(self):
         """更新区域搜索"""        
@@ -5273,25 +5158,84 @@ class Platform(QMainWindow, Ui_MainWindow):
             add_node_to_combobox(area)
 
     def apply_serch(self):
-        """应用界面高性能搜索"""
+        """应用界面搜索"""
         area_data = self.UI_apply_area_combobox.currentData()
         search_text = self.UI_search_in.text().strip()
-        area_path = "/".join(area_data.get('full_path', [])) if area_data else "ALL"
-
-        # 1. O(1) 复杂度从索引库里瞬间匹配当前路径下的所有设备集合
-        area_devices_set = set(d["设备号"] for d in self.data_manager.search(area_path))
-
-        # 2. 传入新模型，执行局部秒级重绘更新
-        self.device_model.filter_data(keyword=search_text, area_devices_set=area_devices_set)
+        
+        if area_data:
+            area_path = "/".join(area_data.get('full_path', []))
+        else:
+            area_path = ""
+        
+        # 设置文本筛选条件
+        self.apply_filter_proxy.setFilterFixedString(search_text)
+        
+        # 如果有区域选择，按区域筛选
+        if area_path:
+            # 获取该区域下的所有设备
+            filtered_rows = set()
+            for row in range(self.device_model.rowCount()):
+                area1 = self.device_model.item(row, self.device_cols_index.get("区域1", -1))
+                area2 = self.device_model.item(row, self.device_cols_index.get("区域2", -1))
+                area3 = self.device_model.item(row, self.device_cols_index.get("区域3", -1))
+                
+                dev_area_path = ""
+                if area1:
+                    dev_area_path = area1.text()
+                if area2 and area2.text():
+                    dev_area_path += "/" + area2.text()
+                if area3 and area3.text():
+                    dev_area_path += "/" + area3.text()
+                
+                if dev_area_path.startswith(area_path):
+                    filtered_rows.add(row)
+            
+            # 设置行筛选，只显示匹配的行
+            self.apply_filter_proxy.set_filter_rows(filtered_rows)
+            _log.info(f"应用界面按区域筛选: {area_path}, 匹配行数: {len(filtered_rows)}")
+        else:
+            # 清除行筛选
+            self.apply_filter_proxy.clear_filter_rows()
 
     def dm_serch(self):
-        """设备管理界面高性能搜索"""
+        """设备管理界面搜索"""
         area_data = self.UI_dm_area_combobox.currentData()
         search_text = self.UI_dm_search_in.text().strip()
-        area_path = "/".join(area_data.get('full_path', [])) if area_data else "ALL"
-
-        area_devices_set = set(d["设备号"] for d in self.data_manager.search(area_path))
-        self.device_model.filter_data(keyword=search_text, area_devices_set=area_devices_set)
+        
+        if area_data:
+            area_path = "/".join(area_data.get('full_path', []))
+        else:
+            area_path = ""
+        
+        # 设置筛选条件
+        self.dm_filter_proxy.setFilterFixedString(search_text)
+        
+        # 如果有区域选择，按区域筛选
+        if area_path:
+            # 获取该区域下的所有设备
+            filtered_rows = set()
+            for row in range(self.device_model.rowCount()):
+                area1 = self.device_model.item(row, self.device_cols_index.get("区域1", -1))
+                area2 = self.device_model.item(row, self.device_cols_index.get("区域2", -1))
+                area3 = self.device_model.item(row, self.device_cols_index.get("区域3", -1))
+                
+                dev_area_path = ""
+                if area1:
+                    dev_area_path = area1.text()
+                if area2 and area2.text():
+                    dev_area_path += "/" + area2.text()
+                if area3 and area3.text():
+                    dev_area_path += "/" + area3.text()
+                
+                if dev_area_path.startswith(area_path):
+                    filtered_rows.add(row)
+            
+            # 设置行筛选，只显示匹配的行
+            self.dm_filter_proxy.set_filter_rows(filtered_rows)
+            _log.info(f"设备管理按区域筛选: {area_path}, 匹配行数: {len(filtered_rows)}")
+        else:
+            # 清除行筛选
+            self.dm_filter_proxy.clear_filter_rows()
 
     def show_message(self, message, msg_type="info"):
         """显示消息"""
